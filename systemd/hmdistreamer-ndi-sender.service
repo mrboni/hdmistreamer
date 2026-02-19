@@ -6,8 +6,8 @@ Requires=hmdistreamer-hdmi-bringup.service
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/hmdistreamer/hmdistreamer.env
 EnvironmentFile=-/run/hmdistreamer/video.env
+EnvironmentFile=-/etc/hmdistreamer/hmdistreamer.env
 ExecStartPre=/usr/local/bin/hmdistreamer-hdmi-bringup
 ExecStart=/usr/bin/env python3 /usr/local/bin/hmdistreamer-ndi-sender --config /etc/hmdistreamer/ndi_sender.toml
 Restart=always
