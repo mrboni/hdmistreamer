@@ -55,7 +55,7 @@ class SenderConfig:
     gst_io_mode: str = "mmap"
     gst_convert_threads: int = 4
     gst_input_format: str = "RGB"
-    gst_output_format: str = "RGBx"
+    gst_output_format: str = "BGRx"
     log_level: str = "INFO"
 
 
@@ -272,9 +272,12 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
         output_format = canonical_gst_format(self.cfg.gst_output_format)
         expected_format = FOURCC_GST_FORMAT[self.ndi_fourcc_name]
         if output_format != expected_format:
-            raise RuntimeError(
-                f"ndi_fourcc={self.ndi_fourcc_name} requires gst_output_format={expected_format} "
-                f"(got {output_format})"
+            logging.warning(
+                "gst_output_format=%s does not match ndi_fourcc=%s (expected %s). "
+                "Using mismatch intentionally can correct channel-order quirks on some capture drivers.",
+                output_format,
+                self.ndi_fourcc_name,
+                expected_format,
             )
         self.start_ndi()
         pipeline_text = build_pipeline(self.cfg)

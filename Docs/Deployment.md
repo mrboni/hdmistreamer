@@ -34,7 +34,7 @@ Performance note:
 
 - Default backend is `gstreamer` for correctness/stability on this capture stack.
 - `capture_backend = "ffmpeg"` is experimental here; without careful timing options it can repeat stale frames.
-- Default sender color path is `RGB -> RGBx + NDI RGBX` to avoid RGB/BGR ambiguity.
+- Current X1300 default uses `RGB -> BGRx` with `NDI RGBX` to compensate an observed channel-order quirk (red/blue swap) on this stack.
 
 ## 3. Resolution Profiles
 

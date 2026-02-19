@@ -20,5 +20,5 @@ appsink_max_buffers = 2
 gst_io_mode = "mmap"
 gst_convert_threads = 4
 gst_input_format = "RGB"
-gst_output_format = "RGBx"
+gst_output_format = "BGRx"
 log_level = "INFO"
