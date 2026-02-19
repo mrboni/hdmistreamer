@@ -3,7 +3,7 @@
 This project now includes:
 
 - `configure-hdmi.sh`: robust HDMI/EDID/media-graph bring-up with retry logic
-- `scripts/ndi_sender.py`: Python NDI sender (`v4l2src -> appsink -> NDI`)
+- `scripts/ndi_sender.py`: Python NDI sender (`ffmpeg->rawvideo` default, `gstreamer` fallback)
 - `systemd/hmdistreamer-hdmi-bringup.service`: boot-time capture bring-up
 - `systemd/hmdistreamer-ndi-sender.service`: persistent NDI sender service
 - `scripts/install-systemd.sh`: installs files into system paths and enables units
@@ -14,7 +14,7 @@ This project now includes:
 sudo ./scripts/install-deps.sh
 ```
 
-This installs OS packages and Python packages (`cyndilib`, `numpy`).
+This installs OS packages (including `ffmpeg`) and Python packages (`cyndilib`, `numpy`).
 
 ## 2. Install scripts + systemd services
 
@@ -26,6 +26,11 @@ Optional configuration:
 
 - `/etc/hmdistreamer/hmdistreamer.env`
 - `/etc/hmdistreamer/ndi_sender.toml`
+
+Performance note:
+
+- Default backend is `ffmpeg` for higher FPS at 1080p60.
+- `capture_backend = "gstreamer"` remains available for fallback/testing.
 
 ## 3. Start and monitor
 

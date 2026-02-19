@@ -18,6 +18,7 @@ apt install -y \
   gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad \
+  ffmpeg \
   python3 \
   python3-pip \
   python3-numpy \
