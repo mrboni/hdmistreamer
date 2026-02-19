@@ -35,6 +35,7 @@ Performance note:
 - Default backend is `gstreamer` for correctness/stability on this capture stack.
 - `capture_backend = "ffmpeg"` is experimental here; without careful timing options it can repeat stale frames.
 - Current X1300 default uses `RGB -> BGRx` with `NDI RGBX` to compensate an observed channel-order quirk (red/blue swap) on this stack.
+- Sender logs now include `capture->send age ms` (local queueing delay estimate) every 5 seconds.
 
 ## 3. Resolution Profiles
 
@@ -78,6 +79,14 @@ sudo systemctl status hmdistreamer-ndi-sender.service --no-pager
 sudo journalctl -u hmdistreamer-hdmi-bringup.service -f
 sudo journalctl -u hmdistreamer-ndi-sender.service -f
 ```
+
+Low-latency knobs (`/etc/hmdistreamer/hmdistreamer.env`):
+
+- `HMDI_APPSINK_MAX_BUFFERS=1`
+- `HMDI_NDI_SEND_ASYNC=0`
+- `HMDI_NDI_CLOCK_VIDEO=0`
+
+These can reduce buffering but may increase jitter/dropped frames if the system is overloaded.
 
 Boot behavior:
 

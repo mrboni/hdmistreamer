@@ -9,6 +9,7 @@ sample_timeout_sec = 0.5
 no_frame_restart_sec = 3.0
 capture_backend = "gstreamer"
 ndi_send_async = true
+ndi_clock_video = true
 ffmpeg_path = "ffmpeg"
 ffmpeg_loglevel = "error"
 ffmpeg_input_format = "rgb24"

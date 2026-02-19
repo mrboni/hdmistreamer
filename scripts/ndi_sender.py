@@ -44,6 +44,7 @@ class SenderConfig:
     no_frame_restart_sec: float = 3.0
     capture_backend: str = "gstreamer"
     ndi_send_async: bool = True
+    ndi_clock_video: bool = True
     ffmpeg_path: str = "ffmpeg"
     ffmpeg_loglevel: str = "error"
     ffmpeg_input_format: str = "rgb24"
@@ -103,6 +104,7 @@ def build_config(config_path: Path) -> SenderConfig:
         "HMDI_NO_FRAME_RESTART_SEC": "no_frame_restart_sec",
         "HMDI_CAPTURE_BACKEND": "capture_backend",
         "HMDI_NDI_SEND_ASYNC": "ndi_send_async",
+        "HMDI_NDI_CLOCK_VIDEO": "ndi_clock_video",
         "HMDI_FFMPEG_PATH": "ffmpeg_path",
         "HMDI_FFMPEG_LOGLEVEL": "ffmpeg_loglevel",
         "HMDI_FFMPEG_INPUT_FORMAT": "ffmpeg_input_format",
@@ -230,7 +232,7 @@ class BaseHDMIToNDISender:
     def start_ndi(self) -> None:
         self.sender = Sender(
             self.cfg.ndi_name,
-            clock_video=True,
+            clock_video=self.cfg.ndi_clock_video,
             clock_audio=False,
         )
 
@@ -249,13 +251,14 @@ class BaseHDMIToNDISender:
             self.video_frame.destroy()
             self.video_frame = None
 
-    def send_frame(self) -> None:
+    def send_frame(self, frame_data: Any | None = None) -> None:
         if self.sender is None:
             raise RuntimeError("NDI sender is not initialized")
+        payload = self.frame_buffer if frame_data is None else frame_data
         if self.cfg.ndi_send_async:
-            ok = self.sender.write_video_async(self.frame_buffer)
+            ok = self.sender.write_video_async(payload)
         else:
-            ok = self.sender.write_video(self.frame_buffer)
+            ok = self.sender.write_video(payload)
         if not ok:
             logging.warning("NDI sender declined frame write")
 
@@ -333,6 +336,10 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
         last_frame_time = time.monotonic()
         fps_window_start = last_frame_time
         fps_window_count = 0
+        age_window_count = 0
+        age_window_sum_ms = 0.0
+        age_window_min_ms = float("inf")
+        age_window_max_ms = 0.0
 
         logging.info("NDI sender '%s' is running (backend=gstreamer)", self.cfg.ndi_name)
         while not self.stop_event.is_set():
@@ -366,6 +373,22 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
 
                 self.frame_buffer_view[:] = map_info.data
                 self.send_frame()
+
+                # Approximate local pipeline queueing delay from capture timestamp to send call.
+                # PTS is in pipeline running-time domain.
+                if self.pipeline is not None:
+                    clock = self.pipeline.get_clock()
+                    pts = buffer.pts
+                    if clock is not None and pts is not None and pts != gst.CLOCK_TIME_NONE:
+                        running_time = clock.get_time() - self.pipeline.get_base_time()
+                        if running_time >= pts:
+                            age_ms = (running_time - pts) / 1_000_000.0
+                            age_window_count += 1
+                            age_window_sum_ms += age_ms
+                            if age_ms < age_window_min_ms:
+                                age_window_min_ms = age_ms
+                            if age_ms > age_window_max_ms:
+                                age_window_max_ms = age_ms
             finally:
                 buffer.unmap(map_info)
 
@@ -373,9 +396,27 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
             fps_window_count += 1
             if now - fps_window_start >= 5.0:
                 fps = fps_window_count / (now - fps_window_start)
-                logging.info("Sending %.1f fps", fps)
+                if age_window_count > 0:
+                    avg_age_ms = age_window_sum_ms / age_window_count
+                    min_age_ms = age_window_min_ms
+                    max_age_ms = age_window_max_ms
+                else:
+                    avg_age_ms = 0.0
+                    min_age_ms = 0.0
+                    max_age_ms = 0.0
+                logging.info(
+                    "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f",
+                    fps,
+                    min_age_ms,
+                    avg_age_ms,
+                    max_age_ms,
+                )
                 fps_window_start = now
                 fps_window_count = 0
+                age_window_count = 0
+                age_window_sum_ms = 0.0
+                age_window_min_ms = float("inf")
+                age_window_max_ms = 0.0
 
 
 class FFmpegHDMIToNDISender(BaseHDMIToNDISender):
