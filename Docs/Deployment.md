@@ -29,8 +29,8 @@ Optional configuration:
 
 Performance note:
 
-- Default backend is `ffmpeg` for higher FPS at 1080p60.
-- `capture_backend = "gstreamer"` remains available for fallback/testing.
+- Default backend is `gstreamer` for correctness/stability on this capture stack.
+- `capture_backend = "ffmpeg"` is experimental here; without careful timing options it can repeat stale frames.
 
 ## 3. Start and monitor
 

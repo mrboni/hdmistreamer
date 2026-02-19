@@ -41,12 +41,13 @@ class SenderConfig:
     fps_den: int = 1
     sample_timeout_sec: float = 0.5
     no_frame_restart_sec: float = 3.0
-    capture_backend: str = "ffmpeg"
+    capture_backend: str = "gstreamer"
     ndi_send_async: bool = True
     ffmpeg_path: str = "ffmpeg"
     ffmpeg_loglevel: str = "error"
     ffmpeg_input_format: str = "rgb24"
     ffmpeg_pix_fmt: str = "bgr0"
+    ffmpeg_vsync: int = 0
     ffmpeg_threads: int = 4
     ffmpeg_thread_queue_size: int = 512
     appsink_max_buffers: int = 2
@@ -102,6 +103,7 @@ def build_config(config_path: Path) -> SenderConfig:
         "HMDI_FFMPEG_LOGLEVEL": "ffmpeg_loglevel",
         "HMDI_FFMPEG_INPUT_FORMAT": "ffmpeg_input_format",
         "HMDI_FFMPEG_PIX_FMT": "ffmpeg_pix_fmt",
+        "HMDI_FFMPEG_VSYNC": "ffmpeg_vsync",
         "HMDI_FFMPEG_THREADS": "ffmpeg_threads",
         "HMDI_FFMPEG_THREAD_QUEUE_SIZE": "ffmpeg_thread_queue_size",
         "HMDI_APPSINK_MAX_BUFFERS": "appsink_max_buffers",
@@ -329,6 +331,8 @@ class FFmpegHDMIToNDISender(BaseHDMIToNDISender):
             self.cfg.video_device,
             "-an",
             "-sn",
+            "-vsync",
+            str(self.cfg.ffmpeg_vsync),
             "-threads",
             str(self.cfg.ffmpeg_threads),
             "-pix_fmt",
