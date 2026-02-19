@@ -1,0 +1,20 @@
+[Unit]
+Description=HDMI to NDI sender
+Wants=network-online.target
+After=network-online.target hmdistreamer-hdmi-bringup.service
+Requires=hmdistreamer-hdmi-bringup.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/hmdistreamer/hmdistreamer.env
+ExecStartPre=/usr/local/bin/hmdistreamer-hdmi-bringup
+ExecStart=/usr/bin/env python3 /usr/local/bin/hmdistreamer-ndi-sender --config /etc/hmdistreamer/ndi_sender.toml
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Configure X1300 HDMI capture pipeline
+Wants=dev-v4l-subdev2.device dev-media0.device dev-video0.device
+After=dev-v4l-subdev2.device dev-media0.device dev-video0.device
+Before=hmdistreamer-ndi-sender.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/hmdistreamer/hmdistreamer.env
+ExecStart=/usr/local/bin/hmdistreamer-hdmi-bringup
+RemainAfterExit=yes
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
