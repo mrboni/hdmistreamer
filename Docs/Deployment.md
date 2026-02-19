@@ -4,7 +4,7 @@ This project now includes:
 
 - `configure-hdmi.sh`: robust HDMI/EDID/media-graph bring-up with retry logic
 - `scripts/ndi_sender.py`: Python NDI sender (`gstreamer` default, `ffmpeg` optional)
-- `systemd/hmdistreamer-hdmi-bringup.service`: boot-time capture bring-up
+- `systemd/hmdistreamer-hdmi-bringup.service`: optional standalone bring-up service
 - `systemd/hmdistreamer-ndi-sender.service`: persistent NDI sender service
 - `scripts/install-systemd.sh`: installs files into system paths and enables units
 - `scripts/hmdistreamer-diagnostics.sh`: one-command diagnostics
@@ -34,6 +34,7 @@ Performance note:
 
 - Default backend is `gstreamer` for correctness/stability on this capture stack.
 - `capture_backend = "ffmpeg"` is experimental here; without careful timing options it can repeat stale frames.
+- Default sender color path is `RGB -> RGBx + NDI RGBX` to avoid RGB/BGR ambiguity.
 
 ## 3. Resolution Profiles
 
@@ -44,6 +45,8 @@ Supported mode profiles (`HMDI_MODE` in `/etc/hmdistreamer/hmdistreamer.env`):
 - `1080p30`
 - `1080p50`
 - `1080p60`
+
+Current conservative default for stability is `1080p25`.
 
 Switch mode quickly:
 
@@ -76,6 +79,11 @@ sudo journalctl -u hmdistreamer-hdmi-bringup.service -f
 sudo journalctl -u hmdistreamer-ndi-sender.service -f
 ```
 
+Boot behavior:
+
+- `hmdistreamer-ndi-sender.service` starts at boot (no login required).
+- Sender startup always runs `/usr/local/bin/hmdistreamer-hdmi-bringup` as `ExecStartPre`, so it can recover from lock loss and replug events automatically.
+
 ## 5. Diagnostics
 
 Run full diagnostics:
@@ -100,11 +108,11 @@ On a second machine on the same wired LAN:
 2. Look for source name set in config (default `RPi5-X1300`).
 3. Confirm:
    - Discovery succeeds
-   - Video is stable at 1080p60
+   - Video is stable at 1080p25
    - No periodic dropouts/restarts
 
 If discovery fails:
 
 - Ensure both devices are on same L2 segment/subnet.
 - Check sender logs for `No video frames received` or GStreamer errors.
-- Confirm `configure-hdmi.sh` still reports locked 1920x1080 @ 148500000.
+- Confirm `configure-hdmi.sh` still reports locked 1920x1080 @ 74250000 for `1080p25`.

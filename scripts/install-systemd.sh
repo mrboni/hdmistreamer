@@ -52,7 +52,7 @@ install -m 0644 "${REPO_ROOT}/systemd/hmdistreamer-ndi-sender.service" /etc/syst
 
 echo "Reloading systemd and enabling services..."
 systemctl daemon-reload
-systemctl enable hmdistreamer-hdmi-bringup.service
+systemctl disable hmdistreamer-hdmi-bringup.service >/dev/null 2>&1 || true
 systemctl enable hmdistreamer-ndi-sender.service
 
 echo "Install complete."

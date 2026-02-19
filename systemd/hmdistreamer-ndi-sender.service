@@ -1,8 +1,8 @@
 [Unit]
 Description=HDMI to NDI sender
-Wants=network-online.target
-After=network-online.target hmdistreamer-hdmi-bringup.service
-Requires=hmdistreamer-hdmi-bringup.service
+Wants=network.target avahi-daemon.service
+After=network.target avahi-daemon.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

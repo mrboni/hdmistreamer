@@ -34,6 +34,7 @@ Gst = None
 @dataclass
 class SenderConfig:
     ndi_name: str = "RPi5-X1300"
+    ndi_fourcc: str = "RGBX"
     video_device: str = "/dev/video0"
     width: int = 1920
     height: int = 1080
@@ -46,13 +47,15 @@ class SenderConfig:
     ffmpeg_path: str = "ffmpeg"
     ffmpeg_loglevel: str = "error"
     ffmpeg_input_format: str = "rgb24"
-    ffmpeg_pix_fmt: str = "bgr0"
+    ffmpeg_pix_fmt: str = "rgb0"
     ffmpeg_vsync: int = 0
     ffmpeg_threads: int = 4
     ffmpeg_thread_queue_size: int = 512
     appsink_max_buffers: int = 2
     gst_io_mode: str = "mmap"
     gst_convert_threads: int = 4
+    gst_input_format: str = "RGB"
+    gst_output_format: str = "RGBx"
     log_level: str = "INFO"
 
 
@@ -90,6 +93,7 @@ def build_config(config_path: Path) -> SenderConfig:
 
     env_overrides = {
         "HMDI_NDI_NAME": "ndi_name",
+        "HMDI_NDI_FOURCC": "ndi_fourcc",
         "HMDI_VIDEO_DEVICE": "video_device",
         "HMDI_WIDTH": "width",
         "HMDI_HEIGHT": "height",
@@ -109,6 +113,8 @@ def build_config(config_path: Path) -> SenderConfig:
         "HMDI_APPSINK_MAX_BUFFERS": "appsink_max_buffers",
         "HMDI_GST_IO_MODE": "gst_io_mode",
         "HMDI_GST_CONVERT_THREADS": "gst_convert_threads",
+        "HMDI_GST_INPUT_FORMAT": "gst_input_format",
+        "HMDI_GST_OUTPUT_FORMAT": "gst_output_format",
         "HMDI_LOG_LEVEL": "log_level",
     }
 
@@ -122,13 +128,73 @@ def build_config(config_path: Path) -> SenderConfig:
     return cfg
 
 
+GST_FORMAT_CANONICAL = {
+    "rgb": "RGB",
+    "bgr": "BGR",
+    "rgbx": "RGBx",
+    "bgrx": "BGRx",
+    "uyvy": "UYVY",
+}
+
+FOURCC_GST_FORMAT = {
+    "RGBX": "RGBx",
+    "BGRX": "BGRx",
+    "UYVY": "UYVY",
+}
+
+FOURCC_BYTES_PER_PIXEL = {
+    "RGBX": 4,
+    "BGRX": 4,
+    "UYVY": 2,
+}
+
+FFMPEG_PIX_FMT_FOR_FOURCC = {
+    "RGBX": "rgb0",
+    "BGRX": "bgr0",
+}
+
+
+def canonical_gst_format(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in GST_FORMAT_CANONICAL:
+        supported = ", ".join(sorted(GST_FORMAT_CANONICAL))
+        raise ValueError(f"Unsupported gst format '{value}'. Supported: {supported}")
+    return GST_FORMAT_CANONICAL[normalized]
+
+
+def normalize_fourcc_name(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized not in FOURCC_BYTES_PER_PIXEL:
+        supported = ", ".join(sorted(FOURCC_BYTES_PER_PIXEL))
+        raise ValueError(f"Unsupported ndi_fourcc '{value}'. Supported: {supported}")
+    return normalized
+
+
 def build_pipeline(cfg: SenderConfig) -> str:
+    input_format = canonical_gst_format(cfg.gst_input_format)
+    output_format = canonical_gst_format(cfg.gst_output_format)
+
+    input_caps = (
+        f"video/x-raw,format={input_format},width={cfg.width},height={cfg.height},"
+        f"framerate={cfg.fps_num}/{cfg.fps_den}"
+    )
+    output_caps = f"video/x-raw,format={output_format}"
+    appsink = (
+        f"appsink name=framesink emit-signals=false sync=false drop=true "
+        f"max-buffers={cfg.appsink_max_buffers}"
+    )
+
+    if input_format == output_format:
+        return (
+            f"v4l2src device={cfg.video_device} io-mode={cfg.gst_io_mode} do-timestamp=true ! "
+            f"{input_caps} ! {appsink}"
+        )
+
     return (
         f"v4l2src device={cfg.video_device} io-mode={cfg.gst_io_mode} do-timestamp=true ! "
-        f"video/x-raw,format=RGB,width={cfg.width},height={cfg.height},framerate={cfg.fps_num}/{cfg.fps_den} ! "
+        f"{input_caps} ! "
         f"videoconvert n-threads={cfg.gst_convert_threads} ! "
-        "video/x-raw,format=BGRx ! "
-        f"appsink name=framesink emit-signals=false sync=false drop=true max-buffers={cfg.appsink_max_buffers}"
+        f"{output_caps} ! {appsink}"
     )
 
 
@@ -154,7 +220,8 @@ class BaseHDMIToNDISender:
     def __init__(self, cfg: SenderConfig, stop_event: Event) -> None:
         self.cfg = cfg
         self.stop_event = stop_event
-        self.expected_bytes = cfg.width * cfg.height * 4
+        self.ndi_fourcc_name = normalize_fourcc_name(cfg.ndi_fourcc)
+        self.expected_bytes = cfg.width * cfg.height * FOURCC_BYTES_PER_PIXEL[self.ndi_fourcc_name]
         self.frame_buffer = bytearray(self.expected_bytes)
         self.frame_buffer_view = memoryview(self.frame_buffer)
         self.sender: Sender | None = None
@@ -170,7 +237,7 @@ class BaseHDMIToNDISender:
         self.video_frame = VideoSendFrame()
         self.video_frame.set_resolution(self.cfg.width, self.cfg.height)
         self.video_frame.set_frame_rate(Fraction(self.cfg.fps_num, self.cfg.fps_den))
-        self.video_frame.set_fourcc(FourCC.BGRX)
+        self.video_frame.set_fourcc(getattr(FourCC, self.ndi_fourcc_name))
         self.sender.set_video_frame(self.video_frame)
         self.sender.open()
 
@@ -202,6 +269,13 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
 
     def start(self) -> None:
         gst = ensure_gst()
+        output_format = canonical_gst_format(self.cfg.gst_output_format)
+        expected_format = FOURCC_GST_FORMAT[self.ndi_fourcc_name]
+        if output_format != expected_format:
+            raise RuntimeError(
+                f"ndi_fourcc={self.ndi_fourcc_name} requires gst_output_format={expected_format} "
+                f"(got {output_format})"
+            )
         self.start_ndi()
         pipeline_text = build_pipeline(self.cfg)
         logging.info("Starting capture pipeline: %s", pipeline_text)
@@ -344,6 +418,18 @@ class FFmpegHDMIToNDISender(BaseHDMIToNDISender):
         return command
 
     def start(self) -> None:
+        expected_pix_fmt = FFMPEG_PIX_FMT_FOR_FOURCC.get(self.ndi_fourcc_name)
+        if expected_pix_fmt is None:
+            raise RuntimeError(
+                f"ffmpeg backend does not currently support ndi_fourcc={self.ndi_fourcc_name}"
+            )
+        if self.cfg.ffmpeg_pix_fmt.strip().lower() != expected_pix_fmt:
+            logging.warning(
+                "ffmpeg_pix_fmt=%s does not match ndi_fourcc=%s; expected %s",
+                self.cfg.ffmpeg_pix_fmt,
+                self.ndi_fourcc_name,
+                expected_pix_fmt,
+            )
         self.start_ndi()
         command = self.build_command()
         logging.info("Starting capture process: %s", " ".join(command))
