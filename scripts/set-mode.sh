@@ -12,6 +12,7 @@ usage() {
 Usage: sudo ./scripts/set-mode.sh <mode> [--no-restart] [--keep-overrides]
 
 Supported modes:
+  720p50
   720p60
   1080p25
   1080p30
@@ -25,7 +26,7 @@ EOF
 
 is_supported_mode() {
   case "$1" in
-    720p60|1080p25|1080p30|1080p50|1080p60)
+    720p50|720p60|1080p25|1080p30|1080p50|1080p60)
       return 0
       ;;
   esac

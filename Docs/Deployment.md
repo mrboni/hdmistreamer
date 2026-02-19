@@ -41,6 +41,7 @@ Performance note:
 
 Supported mode profiles (`HMDI_MODE` in `/etc/hmdistreamer/hmdistreamer.env`):
 
+- `720p50`
 - `720p60`
 - `1080p25`
 - `1080p30`

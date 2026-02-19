@@ -96,8 +96,16 @@ resolve_mode_defaults() {
       MODE_FPS_NUM="60"
       MODE_FPS_DEN="1"
       ;;
+    720p50)
+      MODE_EDID_BASENAME="720p50edid"
+      MODE_WIDTH="1280"
+      MODE_HEIGHT="720"
+      MODE_PIXELCLOCK="74250000"
+      MODE_FPS_NUM="50"
+      MODE_FPS_DEN="1"
+      ;;
     *)
-      fail "Unsupported HMDI_MODE '${HMDI_MODE}'. Supported: 720p60, 1080p25, 1080p30, 1080p50, 1080p60"
+      fail "Unsupported HMDI_MODE '${HMDI_MODE}'. Supported: 720p50, 720p60, 1080p25, 1080p30, 1080p50, 1080p60"
       ;;
   esac
 }
