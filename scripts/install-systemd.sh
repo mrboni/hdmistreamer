@@ -12,7 +12,19 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 echo "Installing configuration files..."
 install -d -m 0755 /etc/hmdistreamer
-install -m 0644 "${REPO_ROOT}/1080p60edid" /etc/hmdistreamer/1080p60edid
+install -d -m 0755 /etc/hmdistreamer/edid
+
+if ls "${REPO_ROOT}"/edid/*edid >/dev/null 2>&1; then
+  for edid in "${REPO_ROOT}"/edid/*edid; do
+    install -m 0644 "$edid" /etc/hmdistreamer/edid/
+  done
+elif [ -f "${REPO_ROOT}/1080p60edid" ]; then
+  install -m 0644 "${REPO_ROOT}/1080p60edid" /etc/hmdistreamer/edid/1080p60edid
+fi
+
+if [ -f /etc/hmdistreamer/edid/1080p60edid ]; then
+  install -m 0644 /etc/hmdistreamer/edid/1080p60edid /etc/hmdistreamer/1080p60edid
+fi
 
 if [ ! -f /etc/hmdistreamer/hmdistreamer.env ]; then
   install -m 0644 "${REPO_ROOT}/config/hmdistreamer.env.example" /etc/hmdistreamer/hmdistreamer.env
@@ -31,6 +43,8 @@ fi
 echo "Installing executable scripts..."
 install -m 0755 "${REPO_ROOT}/configure-hdmi.sh" /usr/local/bin/hmdistreamer-hdmi-bringup
 install -m 0755 "${REPO_ROOT}/scripts/ndi_sender.py" /usr/local/bin/hmdistreamer-ndi-sender
+install -m 0755 "${REPO_ROOT}/scripts/hmdistreamer-diagnostics.sh" /usr/local/bin/hmdistreamer-diagnostics
+install -m 0755 "${REPO_ROOT}/scripts/set-mode.sh" /usr/local/bin/hmdistreamer-set-mode
 
 echo "Installing systemd units..."
 install -m 0644 "${REPO_ROOT}/systemd/hmdistreamer-hdmi-bringup.service" /etc/systemd/system/hmdistreamer-hdmi-bringup.service
