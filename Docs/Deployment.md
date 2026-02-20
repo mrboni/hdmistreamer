@@ -34,7 +34,7 @@ Performance note:
 
 - Default backend is `gstreamer` for correctness/stability on this capture stack.
 - `capture_backend = "ffmpeg"` is experimental here; without careful timing options it can repeat stale frames.
-- Current X1300 default uses `RGB -> BGRx` with `NDI RGBX` to compensate an observed channel-order quirk (red/blue swap) on this stack.
+- Current default is native `UYVY -> NDI UYVY` end-to-end to avoid `videoconvert` overhead.
 - Sender logs now include `capture->send age ms` (local queueing delay estimate) every 5 seconds.
 
 ## 3. Resolution Profiles
@@ -53,6 +53,8 @@ Recommended default for mixed 1080p sources is:
 
 - `HMDI_MODE=1080p-auto`
 - `EDID_FILE=/etc/hmdistreamer/edid/1080p60edid` (single stable EDID identity)
+- `HMDI_MEDIA_BUS_FMT=UYVY8_1X16`, `HMDI_VIDEO_PIXFMT=UYVY`
+- `HMDI_NDI_FOURCC=UYVY`, `HMDI_GST_INPUT_FORMAT=UYVY`, `HMDI_GST_OUTPUT_FORMAT=UYVY`
 - Avoid per-rate EDID swapping unless you explicitly need to force source behavior.
 
 Switch mode quickly:
@@ -122,19 +124,20 @@ Known issue:
 Performance profiling snapshot (RPi 5, 4 CPU cores, source locked at 1080p60):
 
 - Raw capture (`v4l2-ctl --stream-mmap ... --stream-count=600`) : `~59.8 fps`
-- GStreamer pass-through (`RGB -> fakesink`, 600 buffers) : `~59.6 fps`
-- GStreamer conversion (`RGB -> BGRx`, 600 buffers) : `~38.6 fps`
-- GStreamer conversion (`RGB -> UYVY`, 600 buffers) : `~36.2 fps`
-- End-to-end sender (NDI, current service-like settings) : `~23-24 fps`
-- End-to-end sender best quick variant in this test set:
-  - `gstreamer + async + no-copy + UYVY` : `~25-26 fps`
-  - `gstreamer + async + no-copy + RGBx` : `~24-26 fps`
+- GStreamer pass-through (`UYVY -> fakesink`, 300 buffers) : `~59.4 fps`
+- End-to-end sender (`gstreamer + UYVY + async + no-copy`) : `~59.9 fps`
+- End-to-end sender (`gstreamer + UYVY + sync + copy`) : `~59.9 fps`
+- Typical sender stage timings on native UYVY path:
+  - `appsink_wait` avg `~11.4 ms`
+  - `map_copy` avg `~3.2 ms`
+  - `ndi_send` avg `~1.0 ms` (async) / `~8.8-9.2 ms` (sync)
+  - `capture->send age` avg `~16.9-17.0 ms`
 
 Interpretation:
 
 - Capture node is not the bottleneck at 1080p60.
-- Major bottleneck #1 is colorspace/pixel-format conversion (`videoconvert`).
-- Major bottleneck #2 is NDI send path cost (cyndilib/libndi + Python loop/memory handling).
+- Main bottleneck previously was colorspace/pixel-format conversion (`videoconvert`).
+- Native UYVY path removes that cost and restores full-rate 1080p60 in this setup.
 
 H.264 encoder note on this RPi 5 environment:
 

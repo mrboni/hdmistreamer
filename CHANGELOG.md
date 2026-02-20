@@ -19,6 +19,11 @@
   - Runtime sender dimensions/fps now come from detected lock values.
   - `1080p50` profile uses stable `1080p60edid` identity by default to avoid source capability churn.
   - Runtime env no longer writes `HMDI_MODE` into `/run/hmdistreamer/video.env`.
+  - Media graph/video node formats are now configurable via env and default to native UYVY:
+    - `HMDI_MEDIA_BUS_FMT=UYVY8_1X16`
+    - `HMDI_MEDIA_FIELD=none`
+    - `HMDI_MEDIA_COLORSPACE=srgb`
+    - `HMDI_VIDEO_PIXFMT=UYVY`
 - `scripts/set-mode.sh`
   - preserves `EDID_FILE` by default when switching mode profiles.
   - adds `--clear-edid-override` to intentionally re-enable profile-driven EDID selection.
@@ -28,6 +33,13 @@
 - Default example config updated toward stable mixed-source operation:
   - `HMDI_MODE=1080p-auto`
   - fixed EDID recommendation: `/etc/hmdistreamer/edid/1080p60edid`.
+  - default sender/capture path switched to native UYVY (`HMDI_NDI_FOURCC=UYVY`, `HMDI_GST_INPUT_FORMAT=UYVY`, `HMDI_GST_OUTPUT_FORMAT=UYVY`).
+- `scripts/ndi_sender.py`
+  - sender defaults now target UYVY direct path.
+  - ffmpeg backend now supports `ndi_fourcc=UYVY` with `ffmpeg_pix_fmt=uyvy422`.
+- `scripts/profile-performance.sh`
+  - capture-stage tests now key off the active native source format instead of assuming RGB.
+  - ffmpeg sender variant updated to `UYVY`.
 
 ### Fixed
 

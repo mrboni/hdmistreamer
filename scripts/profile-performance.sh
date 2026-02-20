@@ -122,6 +122,7 @@ HEIGHT="${HMDI_HEIGHT:-1080}"
 FPS_NUM="${HMDI_FPS_NUM:-60}"
 FPS_DEN="${HMDI_FPS_DEN:-1}"
 VIDEO_DEVICE="${HMDI_VIDEO_DEVICE:-/dev/video0}"
+SOURCE_GST_FORMAT="${HMDI_GST_INPUT_FORMAT:-UYVY}"
 
 if [ "$FPS_DEN" = "0" ]; then
   echo "Invalid FPS_DEN=0"
@@ -156,23 +157,23 @@ echo "Running capture stage benchmarks..."
 run_timed raw_v4l2 \
   v4l2-ctl -d "$VIDEO_DEVICE" --stream-mmap=4 --stream-count="$STREAM_COUNT" --stream-to=/dev/null
 
-run_timed gst_rgb_fakesink \
+run_timed gst_native_fakesink \
   gst-launch-1.0 -q \
   v4l2src device="$VIDEO_DEVICE" io-mode=mmap num-buffers="$STREAM_COUNT" do-timestamp=true ! \
-  "video/x-raw,format=RGB,width=${WIDTH},height=${HEIGHT},framerate=${FPS_NUM}/${FPS_DEN}" ! \
+  "video/x-raw,format=${SOURCE_GST_FORMAT},width=${WIDTH},height=${HEIGHT},framerate=${FPS_NUM}/${FPS_DEN}" ! \
   fakesink sync=false
 
-run_timed gst_rgb_to_bgrx \
+run_timed gst_native_to_rgbx \
   gst-launch-1.0 -q \
   v4l2src device="$VIDEO_DEVICE" io-mode=mmap num-buffers="$STREAM_COUNT" do-timestamp=true ! \
-  "video/x-raw,format=RGB,width=${WIDTH},height=${HEIGHT},framerate=${FPS_NUM}/${FPS_DEN}" ! \
-  videoconvert n-threads=4 ! video/x-raw,format=BGRx ! \
+  "video/x-raw,format=${SOURCE_GST_FORMAT},width=${WIDTH},height=${HEIGHT},framerate=${FPS_NUM}/${FPS_DEN}" ! \
+  videoconvert n-threads=4 ! video/x-raw,format=RGBx ! \
   fakesink sync=false
 
-run_timed gst_rgb_to_uyvy \
+run_timed gst_native_to_uyvy \
   gst-launch-1.0 -q \
   v4l2src device="$VIDEO_DEVICE" io-mode=mmap num-buffers="$STREAM_COUNT" do-timestamp=true ! \
-  "video/x-raw,format=RGB,width=${WIDTH},height=${HEIGHT},framerate=${FPS_NUM}/${FPS_DEN}" ! \
+  "video/x-raw,format=${SOURCE_GST_FORMAT},width=${WIDTH},height=${HEIGHT},framerate=${FPS_NUM}/${FPS_DEN}" ! \
   videoconvert n-threads=4 ! video/x-raw,format=UYVY ! \
   fakesink sync=false
 
@@ -183,9 +184,9 @@ run_sender_variant current_env
 
 run_sender_variant svc_like \
   HMDI_CAPTURE_BACKEND=gstreamer \
-  HMDI_NDI_FOURCC=RGBX \
-  HMDI_GST_INPUT_FORMAT=RGB \
-  HMDI_GST_OUTPUT_FORMAT=BGRx \
+  HMDI_NDI_FOURCC=UYVY \
+  HMDI_GST_INPUT_FORMAT=UYVY \
+  HMDI_GST_OUTPUT_FORMAT=UYVY \
   HMDI_NDI_SEND_ASYNC=0 \
   HMDI_NDI_SAFE_COPY=1 \
   HMDI_NDI_ASYNC_SAFE_COPY=1 \
@@ -196,7 +197,7 @@ run_sender_variant svc_like \
 run_sender_variant async_rgbx_nocopy \
   HMDI_CAPTURE_BACKEND=gstreamer \
   HMDI_NDI_FOURCC=RGBX \
-  HMDI_GST_INPUT_FORMAT=RGB \
+  HMDI_GST_INPUT_FORMAT=UYVY \
   HMDI_GST_OUTPUT_FORMAT=RGBx \
   HMDI_NDI_SEND_ASYNC=1 \
   HMDI_NDI_SAFE_COPY=0 \
@@ -208,7 +209,7 @@ run_sender_variant async_rgbx_nocopy \
 run_sender_variant async_uyvy_nocopy \
   HMDI_CAPTURE_BACKEND=gstreamer \
   HMDI_NDI_FOURCC=UYVY \
-  HMDI_GST_INPUT_FORMAT=RGB \
+  HMDI_GST_INPUT_FORMAT=UYVY \
   HMDI_GST_OUTPUT_FORMAT=UYVY \
   HMDI_NDI_SEND_ASYNC=1 \
   HMDI_NDI_SAFE_COPY=0 \
@@ -218,16 +219,16 @@ run_sender_variant async_uyvy_nocopy \
   HMDI_GST_CONVERT_THREADS=4
 
 if [ "$INCLUDE_FFMPEG" = "1" ]; then
-  sender_variants+=(ffmpeg_rgbx_nocopy)
-  run_sender_variant ffmpeg_rgbx_nocopy \
+  sender_variants+=(ffmpeg_uyvy_nocopy)
+  run_sender_variant ffmpeg_uyvy_nocopy \
     HMDI_CAPTURE_BACKEND=ffmpeg \
-    HMDI_NDI_FOURCC=RGBX \
+    HMDI_NDI_FOURCC=UYVY \
     HMDI_NDI_SEND_ASYNC=1 \
     HMDI_NDI_SAFE_COPY=0 \
     HMDI_NDI_ASYNC_SAFE_COPY=0 \
     HMDI_NDI_CLOCK_VIDEO=0 \
-    HMDI_FFMPEG_INPUT_FORMAT=rgb24 \
-    HMDI_FFMPEG_PIX_FMT=rgb0 \
+    HMDI_FFMPEG_INPUT_FORMAT=uyvy422 \
+    HMDI_FFMPEG_PIX_FMT=uyvy422 \
     HMDI_FFMPEG_THREADS=4 \
     HMDI_FFMPEG_VSYNC=0
 fi
@@ -236,6 +237,7 @@ echo
 echo "Profiling summary:"
 PROFILE_TMP_DIR="$TMP_DIR" \
 PROFILE_STREAM_COUNT="$STREAM_COUNT" \
+PROFILE_SOURCE_GST_FORMAT="$SOURCE_GST_FORMAT" \
 PROFILE_SENDER_VARIANTS="${sender_variants[*]}" \
 python3 - <<'PY'
 import os
@@ -245,13 +247,14 @@ from pathlib import Path
 
 tmp_dir = Path(os.environ["PROFILE_TMP_DIR"])
 stream_count = int(os.environ["PROFILE_STREAM_COUNT"])
+source_gst_format = os.environ["PROFILE_SOURCE_GST_FORMAT"]
 sender_variants = os.environ["PROFILE_SENDER_VARIANTS"].split()
 
 capture_logs = [
     ("raw_v4l2", tmp_dir / "raw_v4l2.log"),
-    ("gst_rgb_fakesink", tmp_dir / "gst_rgb_fakesink.log"),
-    ("gst_rgb_to_bgrx", tmp_dir / "gst_rgb_to_bgrx.log"),
-    ("gst_rgb_to_uyvy", tmp_dir / "gst_rgb_to_uyvy.log"),
+    ("gst_native_fakesink", tmp_dir / "gst_native_fakesink.log"),
+    ("gst_native_to_rgbx", tmp_dir / "gst_native_to_rgbx.log"),
+    ("gst_native_to_uyvy", tmp_dir / "gst_native_to_uyvy.log"),
 ]
 
 real_re = re.compile(r"^real\s+0m([0-9.]+)s$", re.M)
@@ -280,6 +283,7 @@ def avg(values: list[float]) -> float:
 
 
 print("Capture stage throughput:")
+print(f"  source caps format={source_gst_format}")
 for name, path in capture_logs:
     text = path.read_text(errors="ignore") if path.exists() else ""
     sec = parse_real_seconds(text)

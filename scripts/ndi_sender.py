@@ -34,7 +34,7 @@ Gst = None
 @dataclass
 class SenderConfig:
     ndi_name: str = "RPi5-X1300"
-    ndi_fourcc: str = "RGBX"
+    ndi_fourcc: str = "UYVY"
     video_device: str = "/dev/video0"
     width: int = 1920
     height: int = 1080
@@ -49,16 +49,16 @@ class SenderConfig:
     ndi_clock_video: bool = True
     ffmpeg_path: str = "ffmpeg"
     ffmpeg_loglevel: str = "error"
-    ffmpeg_input_format: str = "rgb24"
-    ffmpeg_pix_fmt: str = "rgb0"
+    ffmpeg_input_format: str = "uyvy422"
+    ffmpeg_pix_fmt: str = "uyvy422"
     ffmpeg_vsync: int = 0
     ffmpeg_threads: int = 4
     ffmpeg_thread_queue_size: int = 512
     appsink_max_buffers: int = 2
     gst_io_mode: str = "mmap"
     gst_convert_threads: int = 4
-    gst_input_format: str = "RGB"
-    gst_output_format: str = "BGRx"
+    gst_input_format: str = "UYVY"
+    gst_output_format: str = "UYVY"
     gst_use_leaky_queue: bool = False
     gst_queue_max_buffers: int = 1
     drop_stale_ms: float = 0.0
@@ -195,6 +195,7 @@ FOURCC_BYTES_PER_PIXEL = {
 FFMPEG_PIX_FMT_FOR_FOURCC = {
     "RGBX": "rgb0",
     "BGRX": "bgr0",
+    "UYVY": "uyvy422",
 }
 
 

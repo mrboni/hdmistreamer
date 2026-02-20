@@ -26,12 +26,16 @@ VIDEO_DEV="${VIDEO_DEV:-/dev/video0}"
 MEDIA_DEV="${MEDIA_DEV:-/dev/media0}"
 EDID_DIR="${EDID_DIR:-/etc/hmdistreamer/edid}"
 RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-/run/hmdistreamer/video.env}"
-HMDI_MODE="${HMDI_MODE:-1080p25}"
+HMDI_MODE="${HMDI_MODE:-1080p-auto}"
 HDMI_LOCK_RETRIES="${HDMI_LOCK_RETRIES:-15}"
 HDMI_LOCK_DELAY_SEC="${HDMI_LOCK_DELAY_SEC:-2}"
 DEVICE_WAIT_SEC="${DEVICE_WAIT_SEC:-120}"
 VALIDATE_STREAM="${VALIDATE_STREAM:-0}"
 VALIDATE_FRAME_COUNT="${VALIDATE_FRAME_COUNT:-60}"
+HMDI_MEDIA_BUS_FMT="${HMDI_MEDIA_BUS_FMT:-UYVY8_1X16}"
+HMDI_MEDIA_FIELD="${HMDI_MEDIA_FIELD:-none}"
+HMDI_MEDIA_COLORSPACE="${HMDI_MEDIA_COLORSPACE:-srgb}"
+HMDI_VIDEO_PIXFMT="${HMDI_VIDEO_PIXFMT:-UYVY}"
 
 MODE_EDID_BASENAME=""
 MODE_WIDTH=""
@@ -305,23 +309,25 @@ wait_for_path() {
 configure_media_graph() {
   local width="$1"
   local height="$2"
+  local media_fmt
+  media_fmt="${HMDI_MEDIA_BUS_FMT}/${width}x${height} field:${HMDI_MEDIA_FIELD} colorspace:${HMDI_MEDIA_COLORSPACE}"
   log "Resetting media graph"
   media-ctl -d "$MEDIA_DEV" -r
 
   log "Enabling CSI link"
   media-ctl -d "$MEDIA_DEV" -l "'csi2':4 -> 'rp1-cfe-csi2_ch0':0 [1]"
 
-  log "Propagating RGB888 ${width}x${height} format"
-  media-ctl -d "$MEDIA_DEV" --set-v4l2 "'tc358743 11-000f':0 [fmt:RGB888_1X24/${width}x${height} field:none colorspace:srgb]"
-  media-ctl -d "$MEDIA_DEV" --set-v4l2 "'csi2':0 [fmt:RGB888_1X24/${width}x${height} field:none colorspace:srgb]"
-  media-ctl -d "$MEDIA_DEV" --set-v4l2 "'csi2':4 [fmt:RGB888_1X24/${width}x${height} field:none colorspace:srgb]"
+  log "Propagating ${HMDI_MEDIA_BUS_FMT} ${width}x${height} format"
+  media-ctl -d "$MEDIA_DEV" --set-v4l2 "'tc358743 11-000f':0 [fmt:${media_fmt}]"
+  media-ctl -d "$MEDIA_DEV" --set-v4l2 "'csi2':0 [fmt:${media_fmt}]"
+  media-ctl -d "$MEDIA_DEV" --set-v4l2 "'csi2':4 [fmt:${media_fmt}]"
 }
 
 configure_video_node() {
   local width="$1"
   local height="$2"
-  log "Configuring ${VIDEO_DEV} to RGB3 ${width}x${height}"
-  v4l2-ctl -d "$VIDEO_DEV" -v "width=${width},height=${height},pixelformat=RGB3"
+  log "Configuring ${VIDEO_DEV} to ${HMDI_VIDEO_PIXFMT} ${width}x${height}"
+  v4l2-ctl -d "$VIDEO_DEV" -v "width=${width},height=${height},pixelformat=${HMDI_VIDEO_PIXFMT}"
 }
 
 validate_stream() {

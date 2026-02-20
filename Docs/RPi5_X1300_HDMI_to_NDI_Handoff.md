@@ -25,9 +25,7 @@ We have successfully achieved:
 
 -   Successful GStreamer streaming using:
 
-        format=RGB
-
--   Confirmed that format=BGR fails (caps mismatch)
+        format=UYVY
 
 The capture stack is now stable and reproducible.
 
@@ -69,11 +67,11 @@ media-ctl -d /dev/media0   -l "'csi2':4 -> 'rp1-cfe-csi2_ch0':0 [1]"
 Propagate formats:
 
 ``` bash
-media-ctl -d /dev/media0   --set-v4l2 "'tc358743 11-000f':0 [fmt:RGB888_1X24/1920x1080 field:none colorspace:srgb]"
+media-ctl -d /dev/media0   --set-v4l2 "'tc358743 11-000f':0 [fmt:UYVY8_1X16/1920x1080 field:none colorspace:srgb]"
 
-media-ctl -d /dev/media0   --set-v4l2 "'csi2':0 [fmt:RGB888_1X24/1920x1080 field:none colorspace:srgb]"
+media-ctl -d /dev/media0   --set-v4l2 "'csi2':0 [fmt:UYVY8_1X16/1920x1080 field:none colorspace:srgb]"
 
-media-ctl -d /dev/media0   --set-v4l2 "'csi2':4 [fmt:RGB888_1X24/1920x1080 field:none colorspace:srgb]"
+media-ctl -d /dev/media0   --set-v4l2 "'csi2':4 [fmt:UYVY8_1X16/1920x1080 field:none colorspace:srgb]"
 ```
 
 ------------------------------------------------------------------------
@@ -81,7 +79,7 @@ media-ctl -d /dev/media0   --set-v4l2 "'csi2':4 [fmt:RGB888_1X24/1920x1080 field
 ## 2.3 Configure Video Node
 
 ``` bash
-v4l2-ctl -d /dev/video0   -v width=1920,height=1080,pixelformat=RGB3
+v4l2-ctl -d /dev/video0   -v width=1920,height=1080,pixelformat=UYVY
 ```
 
 ------------------------------------------------------------------------
@@ -98,8 +96,7 @@ If frames print as `<<<<<<<<`, streaming is functional.
 
 # 3. Known Critical Requirements
 
--   Must use `format=RGB` in GStreamer.
--   `format=BGR` fails.
+-   Prefer native `format=UYVY` in GStreamer/NDI to avoid conversion overhead.
 -   EDID must be injected every boot.
 -   Media graph must be configured before streaming.
 -   If HDMI is unplugged, pipeline must be reinitialised.
@@ -109,7 +106,7 @@ If frames print as `<<<<<<<<`, streaming is functional.
 # 4. Current Working GStreamer Test
 
 ``` bash
-gst-launch-1.0 v4l2src device=/dev/video0 io-mode=mmap !   video/x-raw,format=RGB,width=1920,height=1080,framerate=60/1 !   fakesink
+gst-launch-1.0 v4l2src device=/dev/video0 io-mode=mmap !   video/x-raw,format=UYVY,width=1920,height=1080,framerate=60/1 !   fakesink
 ```
 
 ------------------------------------------------------------------------
@@ -144,7 +141,7 @@ startup steps.
 
 Architecture:
 
-    v4l2src (RGB)
+    v4l2src (UYVY)
     → GStreamer appsink
     → Python NDI sender
     → Gigabit Ethernet
