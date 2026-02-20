@@ -114,12 +114,16 @@ Known-good behavior:
   - `HMDI_MODE=1080p-auto`
   - `EDID_FILE=/etc/hmdistreamer/edid/1080p60edid`
 - Avoid mode-specific EDID swapping for normal operation.
+- Native `UYVY -> NDI UYVY` pipeline is now stable and low-latency in this setup.
+- Repeated-column artifact previously seen at 1080p50 is no longer observed after removing RGB/YUV conversion from the active path.
 
-Known issue:
+Reboot-cycle validation (2026-02-20):
 
-- DSLR/camera input at 1080p50 can show a repeated image column artifact.
-- Camera rates tested as good in this setup: 1080p30 and 1080p60.
-- Camera 1080p50 artifact remains unresolved; park this until core throughput/latency work is complete.
+- Host reboot completed; service came back automatically with no manual steps.
+- `hmdistreamer-ndi-sender.service` is `enabled` and `active` after boot.
+- Boot instance started at `2026-02-20 14:42:40 GMT` with successful `ExecStartPre` (`hmdistreamer-hdmi-bringup`).
+- `/dev/video0` post-boot format is `UYVY` at `1920x1080`.
+- Sender logs post-boot show stable `50.0 fps`, `stale_drop=0`, and `capture->send age` around `~20.2 ms`.
 
 Performance profiling snapshot (RPi 5, 4 CPU cores, source locked at 1080p60):
 

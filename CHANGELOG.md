@@ -10,7 +10,7 @@
   - per-stage averages for `appsink_wait`, `map_copy`, `ndi_send`, and `frame_read` (ffmpeg backend).
 - `scripts/profile-performance.sh` and installed command `hmdistreamer-profile-performance` for repeatable throughput + latency profiling.
 - `ndi_safe_copy` and `ndi_async_safe_copy` config entries in `config/ndi_sender.toml.example` and `config/hmdistreamer.env.example`.
-- Current-state and profiling notes in deployment docs, including known camera 1080p50 artifact behavior.
+- Current-state and profiling notes in deployment docs, including reboot-cycle validation on `2026-02-20`.
 
 ### Changed
 
@@ -46,7 +46,8 @@
 - 1080p50/1080p60 profile ambiguity caused by shared pixelclock now resolved via explicit FPS matching.
 - Mode switch failures caused by stale runtime mode state overriding static config.
 - EDID identity flip during 50/60 profile switching when using defaults.
+- Repeated-column artifact at 1080p50 is resolved in the active default path by using native `UYVY -> NDI UYVY` (no conversion).
 
 ### Known Issues
 
-- Some DSLR/camera 1080p50 outputs still show repeated-column artifacts while 1080p30/60 remain clean in current stack.
+- No active repeated-column issue observed in current native UYVY deployment path; keep prior notes for historical context.
