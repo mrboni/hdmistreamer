@@ -24,4 +24,7 @@ gst_io_mode = "mmap"
 gst_convert_threads = 4
 gst_input_format = "RGB"
 gst_output_format = "BGRx"
+gst_use_leaky_queue = false
+gst_queue_max_buffers = 1
+drop_stale_ms = 0.0
 log_level = "INFO"

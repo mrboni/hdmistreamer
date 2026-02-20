@@ -263,6 +263,7 @@ gst_step_re = re.compile(
 ff_step_re = re.compile(
     r"frame_read avg=([0-9.]+)\s+ndi_send avg=([0-9.]+)\s+frame_proc avg=([0-9.]+)"
 )
+stale_drop_re = re.compile(r"stale_drop=[0-9]+/[0-9]+ \(([0-9.]+)%\)")
 
 
 def parse_real_seconds(text: str) -> float | None:
@@ -291,7 +292,7 @@ for name, path in capture_logs:
 print()
 print("Sender stage profiling:")
 print(
-    "  {name:20s} {fps:>7s} {age:>10s} {wait:>12s} {copy:>10s} {send:>10s} {read:>10s} {dominant:>14s}".format(
+    "  {name:20s} {fps:>7s} {age:>10s} {wait:>12s} {copy:>10s} {send:>10s} {read:>10s} {stale:>10s} {dominant:>14s}".format(
         name="variant",
         fps="avg_fps",
         age="age_avg",
@@ -299,6 +300,7 @@ print(
         copy="map_copy",
         send="ndi_send",
         read="frame_read",
+        stale="stale_pct",
         dominant="dominant_step",
     )
 )
@@ -310,9 +312,11 @@ for name in sender_variants:
     age_vals = [float(v) for v in age_re.findall(text)]
     gst_steps = [tuple(float(x) for x in m) for m in gst_step_re.findall(text)]
     ff_steps = [tuple(float(x) for x in m) for m in ff_step_re.findall(text)]
+    stale_vals = [float(v) for v in stale_drop_re.findall(text)]
 
     avg_fps = avg(fps_vals)
     avg_age = avg(age_vals)
+    avg_stale = avg(stale_vals)
 
     appsink_wait = map_copy = ndi_send = frame_read = 0.0
     dominant = "-"
@@ -334,7 +338,7 @@ for name in sender_variants:
         )[0]
 
     print(
-        "  {name:20s} {fps:7.2f} {age:10.2f} {wait:12.2f} {copy:10.2f} {send:10.2f} {read:10.2f} {dominant:>14s}".format(
+        "  {name:20s} {fps:7.2f} {age:10.2f} {wait:12.2f} {copy:10.2f} {send:10.2f} {read:10.2f} {stale:10.2f} {dominant:>14s}".format(
             name=name,
             fps=avg_fps,
             age=avg_age,
@@ -342,6 +346,7 @@ for name in sender_variants:
             copy=map_copy,
             send=ndi_send,
             read=frame_read,
+            stale=avg_stale,
             dominant=dominant,
         )
     )

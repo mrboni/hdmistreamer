@@ -93,6 +93,9 @@ Low-latency knobs (`/etc/hmdistreamer/hmdistreamer.env`):
 - `HMDI_APPSINK_MAX_BUFFERS=1`
 - `HMDI_NDI_SEND_ASYNC=0`
 - `HMDI_NDI_CLOCK_VIDEO=0`
+- `HMDI_GST_USE_LEAKY_QUEUE=1`
+- `HMDI_GST_QUEUE_MAX_BUFFERS=1`
+- `HMDI_DROP_STALE_MS=120` (drops stale frames before NDI send; tune to taste)
 
 These can reduce buffering but may increase jitter/dropped frames if the system is overloaded.
 

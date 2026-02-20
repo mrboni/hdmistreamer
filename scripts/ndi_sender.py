@@ -59,6 +59,9 @@ class SenderConfig:
     gst_convert_threads: int = 4
     gst_input_format: str = "RGB"
     gst_output_format: str = "BGRx"
+    gst_use_leaky_queue: bool = False
+    gst_queue_max_buffers: int = 1
+    drop_stale_ms: float = 0.0
     log_level: str = "INFO"
 
 
@@ -153,6 +156,9 @@ def build_config(config_path: Path) -> SenderConfig:
         "HMDI_GST_CONVERT_THREADS": "gst_convert_threads",
         "HMDI_GST_INPUT_FORMAT": "gst_input_format",
         "HMDI_GST_OUTPUT_FORMAT": "gst_output_format",
+        "HMDI_GST_USE_LEAKY_QUEUE": "gst_use_leaky_queue",
+        "HMDI_GST_QUEUE_MAX_BUFFERS": "gst_queue_max_buffers",
+        "HMDI_DROP_STALE_MS": "drop_stale_ms",
         "HMDI_LOG_LEVEL": "log_level",
     }
 
@@ -221,18 +227,26 @@ def build_pipeline(cfg: SenderConfig) -> str:
         f"appsink name=framesink emit-signals=false sync=false drop=true "
         f"max-buffers={cfg.appsink_max_buffers}"
     )
+    queue_stage = ""
+    if cfg.gst_use_leaky_queue:
+        queue_stage = (
+            "queue leaky=downstream "
+            f"max-size-buffers={cfg.gst_queue_max_buffers} max-size-time=0 max-size-bytes=0 ! "
+        )
 
     if input_format == output_format:
         return (
             f"v4l2src device={cfg.video_device} io-mode={cfg.gst_io_mode} do-timestamp=true ! "
-            f"{input_caps} ! {appsink}"
+            f"{input_caps} ! {queue_stage}{appsink}"
         )
 
     return (
         f"v4l2src device={cfg.video_device} io-mode={cfg.gst_io_mode} do-timestamp=true ! "
         f"{input_caps} ! "
+        f"{queue_stage}"
         f"videoconvert n-threads={cfg.gst_convert_threads} ! "
-        f"{output_caps} ! {appsink}"
+        f"{output_caps} ! "
+        f"{queue_stage}{appsink}"
     )
 
 
@@ -382,6 +396,8 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
         copy_window = WindowMetric()
         send_window = WindowMetric()
         frame_proc_window = WindowMetric()
+        pulled_window_count = 0
+        stale_drop_window_count = 0
 
         logging.info("NDI sender '%s' is running (backend=gstreamer)", self.cfg.ndi_name)
         while not self.stop_event.is_set():
@@ -400,6 +416,7 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
             buffer = sample.get_buffer()
             if buffer is None:
                 continue
+            last_frame_time = pull_end
 
             mapped, map_info = buffer.map(gst.MapFlags.READ)
             if not mapped:
@@ -415,17 +432,9 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                         self.expected_bytes,
                     )
                     continue
+                pulled_window_count += 1
 
-                copy_start = time.monotonic()
-                self.frame_buffer_view[:] = map_info.data
-                copy_end = time.monotonic()
-                copy_window.add((copy_end - copy_start) * 1000.0)
-
-                send_start = time.monotonic()
-                self.send_frame()
-                send_end = time.monotonic()
-                send_window.add((send_end - send_start) * 1000.0)
-                frame_proc_window.add((send_end - frame_start) * 1000.0)
+                age_ms: float | None = None
 
                 # Approximate local pipeline queueing delay from capture timestamp to send call.
                 # PTS is in pipeline running-time domain.
@@ -437,6 +446,25 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                         if running_time >= pts:
                             age_ms = (running_time - pts) / 1_000_000.0
                             age_window.add(age_ms)
+
+                if (
+                    self.cfg.drop_stale_ms > 0.0
+                    and age_ms is not None
+                    and age_ms > self.cfg.drop_stale_ms
+                ):
+                    stale_drop_window_count += 1
+                    continue
+
+                copy_start = time.monotonic()
+                self.frame_buffer_view[:] = map_info.data
+                copy_end = time.monotonic()
+                copy_window.add((copy_end - copy_start) * 1000.0)
+
+                send_start = time.monotonic()
+                self.send_frame()
+                send_end = time.monotonic()
+                send_window.add((send_end - send_start) * 1000.0)
+                frame_proc_window.add((send_end - frame_start) * 1000.0)
             finally:
                 buffer.unmap(map_info)
 
@@ -446,18 +474,40 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
             if now - fps_window_start >= 5.0:
                 fps = fps_window_count / (now - fps_window_start)
                 min_age_ms, avg_age_ms, max_age_ms = age_window.summary()
-                logging.info(
-                    "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
-                    "step ms appsink_wait avg=%.2f map_copy avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f",
-                    fps,
-                    min_age_ms,
-                    avg_age_ms,
-                    max_age_ms,
-                    appsink_wait_window.avg(),
-                    copy_window.avg(),
-                    send_window.avg(),
-                    frame_proc_window.avg(),
-                )
+                if self.cfg.drop_stale_ms > 0.0:
+                    stale_drop_ratio = 0.0
+                    if pulled_window_count > 0:
+                        stale_drop_ratio = (stale_drop_window_count / pulled_window_count) * 100.0
+                    logging.info(
+                        "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
+                        "step ms appsink_wait avg=%.2f map_copy avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f | "
+                        "stale_drop=%d/%d (%.1f%%) threshold=%.1fms",
+                        fps,
+                        min_age_ms,
+                        avg_age_ms,
+                        max_age_ms,
+                        appsink_wait_window.avg(),
+                        copy_window.avg(),
+                        send_window.avg(),
+                        frame_proc_window.avg(),
+                        stale_drop_window_count,
+                        pulled_window_count,
+                        stale_drop_ratio,
+                        self.cfg.drop_stale_ms,
+                    )
+                else:
+                    logging.info(
+                        "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
+                        "step ms appsink_wait avg=%.2f map_copy avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f",
+                        fps,
+                        min_age_ms,
+                        avg_age_ms,
+                        max_age_ms,
+                        appsink_wait_window.avg(),
+                        copy_window.avg(),
+                        send_window.avg(),
+                        frame_proc_window.avg(),
+                    )
                 fps_window_start = now
                 fps_window_count = 0
                 age_window.reset()
@@ -465,6 +515,8 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                 copy_window.reset()
                 send_window.reset()
                 frame_proc_window.reset()
+                pulled_window_count = 0
+                stale_drop_window_count = 0
 
 
 class FFmpegHDMIToNDISender(BaseHDMIToNDISender):
