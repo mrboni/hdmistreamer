@@ -3,13 +3,15 @@
 set -Eeuo pipefail
 
 ENV_FILE="${ENV_FILE:-/etc/hmdistreamer/hmdistreamer.env}"
+RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-/run/hmdistreamer/video.env}"
 RESTART=1
 KEEP_OVERRIDES=0
+CLEAR_EDID_OVERRIDE=0
 MODE=""
 
 usage() {
   cat <<'EOF'
-Usage: sudo ./scripts/set-mode.sh <mode> [--no-restart] [--keep-overrides]
+Usage: sudo ./scripts/set-mode.sh <mode> [--no-restart] [--keep-overrides] [--clear-edid-override]
 
 Supported modes:
   720p50
@@ -18,15 +20,18 @@ Supported modes:
   1080p30
   1080p50
   1080p60
+  1080p-auto
 
-By default this removes explicit EDID/timing/sender dimension overrides from
-/etc/hmdistreamer/hmdistreamer.env so mode profiles can take effect.
+By default this removes explicit timing/sender-dimension overrides from
+/etc/hmdistreamer/hmdistreamer.env, but preserves EDID_FILE so a fixed EDID
+can stay active across mode changes. Use --clear-edid-override if you want
+mode profiles to control EDID selection again.
 EOF
 }
 
 is_supported_mode() {
   case "$1" in
-    720p50|720p60|1080p25|1080p30|1080p50|1080p60)
+    720p50|720p60|1080p25|1080p30|1080p50|1080p60|1080p-auto|1080pauto)
       return 0
       ;;
   esac
@@ -40,6 +45,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --keep-overrides)
       KEEP_OVERRIDES=1
+      ;;
+    --clear-edid-override)
+      CLEAR_EDID_OVERRIDE=1
       ;;
     -h|--help)
       usage
@@ -87,7 +95,6 @@ echo "Set HMDI_MODE=${MODE} in ${ENV_FILE}"
 
 if [ "$KEEP_OVERRIDES" = "0" ]; then
   sed -i \
-    -e '/^EDID_FILE=/d' \
     -e '/^EXPECTED_WIDTH=/d' \
     -e '/^EXPECTED_HEIGHT=/d' \
     -e '/^EXPECTED_PIXELCLOCK=/d' \
@@ -98,11 +105,22 @@ if [ "$KEEP_OVERRIDES" = "0" ]; then
     -e '/^HMDI_FPS_NUM=/d' \
     -e '/^HMDI_FPS_DEN=/d' \
     "$ENV_FILE"
-  echo "Removed explicit EDID/timing/sender-dimension overrides from ${ENV_FILE}."
+  echo "Removed explicit timing/sender-dimension overrides from ${ENV_FILE}."
+  if [ "$CLEAR_EDID_OVERRIDE" = "1" ]; then
+    sed -i -e '/^EDID_FILE=/d' "$ENV_FILE"
+    echo "Removed EDID_FILE override from ${ENV_FILE}."
+  elif grep -q '^EDID_FILE=' "$ENV_FILE"; then
+    echo "Retained fixed EDID_FILE override from ${ENV_FILE}."
+  fi
 elif grep -Eq '^(EDID_FILE|EXPECTED_WIDTH|EXPECTED_HEIGHT|EXPECTED_PIXELCLOCK|EXPECTED_FPS_NUM|EXPECTED_FPS_DEN|HMDI_WIDTH|HMDI_HEIGHT|HMDI_FPS_NUM|HMDI_FPS_DEN)=' "$ENV_FILE"; then
   echo "Warning: ${ENV_FILE} contains explicit overrides that can supersede profile defaults."
   echo "Review these keys if the mode does not take effect:"
   grep -E '^(EDID_FILE|EXPECTED_WIDTH|EXPECTED_HEIGHT|EXPECTED_PIXELCLOCK|EXPECTED_FPS_NUM|EXPECTED_FPS_DEN|HMDI_WIDTH|HMDI_HEIGHT|HMDI_FPS_NUM|HMDI_FPS_DEN)=' "$ENV_FILE" || true
+fi
+
+if [ -e "$RUNTIME_ENV_FILE" ]; then
+  rm -f "$RUNTIME_ENV_FILE"
+  echo "Cleared stale runtime video state: ${RUNTIME_ENV_FILE}"
 fi
 
 if [ "$RESTART" = "1" ]; then

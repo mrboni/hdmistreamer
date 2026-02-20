@@ -47,8 +47,13 @@ Supported mode profiles (`HMDI_MODE` in `/etc/hmdistreamer/hmdistreamer.env`):
 - `1080p30`
 - `1080p50`
 - `1080p60`
+- `1080p-auto` (locks to current 1080p source timing)
 
-Current conservative default for stability is `1080p25`.
+Recommended default for mixed 1080p sources is:
+
+- `HMDI_MODE=1080p-auto`
+- `EDID_FILE=/etc/hmdistreamer/edid/1080p60edid` (single stable EDID identity)
+- Avoid per-rate EDID swapping unless you explicitly need to force source behavior.
 
 Switch mode quickly:
 
@@ -56,8 +61,10 @@ Switch mode quickly:
 sudo hmdistreamer-set-mode 720p60
 ```
 
-The helper clears explicit `EDID_FILE`/timing/sender-dimension overrides by default so profile changes apply cleanly.
-Use `--keep-overrides` if you want to preserve manual overrides.
+The helper now clears timing/sender-dimension overrides by default, but preserves
+`EDID_FILE` so fixed-EDID setups remain stable across mode changes.
+Use `--clear-edid-override` if you intentionally want profile-driven EDID switching.
+Use `--keep-overrides` if you want to preserve all overrides.
 
 Or edit manually and restart:
 
@@ -94,6 +101,44 @@ Boot behavior:
 - `hmdistreamer-ndi-sender.service` starts at boot (no login required).
 - Sender startup always runs `/usr/local/bin/hmdistreamer-hdmi-bringup` as `ExecStartPre`, so it can recover from lock loss and replug events automatically.
 
+## 4.1 Current State (2026-02-20)
+
+Known-good behavior:
+
+- Source-driven switching on PC input between 1080p60 and 1080p50 works when using:
+  - `HMDI_MODE=1080p-auto`
+  - `EDID_FILE=/etc/hmdistreamer/edid/1080p60edid`
+- Avoid mode-specific EDID swapping for normal operation.
+
+Known issue:
+
+- DSLR/camera input at 1080p50 can show a repeated image column artifact.
+- Camera rates tested as good in this setup: 1080p30 and 1080p60.
+- Camera 1080p50 artifact remains unresolved; park this until core throughput/latency work is complete.
+
+Performance profiling snapshot (RPi 5, 4 CPU cores, source locked at 1080p60):
+
+- Raw capture (`v4l2-ctl --stream-mmap ... --stream-count=600`) : `~59.8 fps`
+- GStreamer pass-through (`RGB -> fakesink`, 600 buffers) : `~59.6 fps`
+- GStreamer conversion (`RGB -> BGRx`, 600 buffers) : `~38.6 fps`
+- GStreamer conversion (`RGB -> UYVY`, 600 buffers) : `~36.2 fps`
+- End-to-end sender (NDI, current service-like settings) : `~23-24 fps`
+- End-to-end sender best quick variant in this test set:
+  - `gstreamer + async + no-copy + UYVY` : `~25-26 fps`
+  - `gstreamer + async + no-copy + RGBx` : `~24-26 fps`
+
+Interpretation:
+
+- Capture node is not the bottleneck at 1080p60.
+- Major bottleneck #1 is colorspace/pixel-format conversion (`videoconvert`).
+- Major bottleneck #2 is NDI send path cost (cyndilib/libndi + Python loop/memory handling).
+
+H.264 encoder note on this RPi 5 environment:
+
+- Current stack does not use H.264 encoding for the NDI path.
+- `ffmpeg` lists `h264_v4l2m2m`, but runtime test reports `Could not find a valid device`.
+- `v4l2-ctl --list-devices` only exposes `rp1-cfe` capture nodes here, no active mem2mem encoder node.
+
 ## 5. Diagnostics
 
 Run full diagnostics:
@@ -101,6 +146,19 @@ Run full diagnostics:
 ```bash
 sudo hmdistreamer-diagnostics
 ```
+
+Run throughput + latency profiling (stops sender service temporarily):
+
+```bash
+sudo hmdistreamer-profile-performance
+```
+
+The profiling summary reports both FPS and stage latency averages, including:
+
+- `appsink_wait` (upstream wait time for next frame, includes conversion/queueing effects)
+- `map_copy` (frame copy into sender buffer)
+- `ndi_send` (NDI write call time)
+- `frame_read` (ffmpeg backend read time, when enabled)
 
 Include optional quick stream test when sender is stopped:
 
@@ -118,11 +176,11 @@ On a second machine on the same wired LAN:
 2. Look for source name set in config (default `RPi5-X1300`).
 3. Confirm:
    - Discovery succeeds
-   - Video is stable at 1080p25
+   - Video is stable at the current source timing
    - No periodic dropouts/restarts
 
 If discovery fails:
 
 - Ensure both devices are on same L2 segment/subnet.
 - Check sender logs for `No video frames received` or GStreamer errors.
-- Confirm `configure-hdmi.sh` still reports locked 1920x1080 @ 74250000 for `1080p25`.
+- Confirm `configure-hdmi.sh` reports a valid lock for the active source mode.

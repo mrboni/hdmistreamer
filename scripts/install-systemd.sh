@@ -45,6 +45,7 @@ install -m 0755 "${REPO_ROOT}/configure-hdmi.sh" /usr/local/bin/hmdistreamer-hdm
 install -m 0755 "${REPO_ROOT}/scripts/ndi_sender.py" /usr/local/bin/hmdistreamer-ndi-sender
 install -m 0755 "${REPO_ROOT}/scripts/hmdistreamer-diagnostics.sh" /usr/local/bin/hmdistreamer-diagnostics
 install -m 0755 "${REPO_ROOT}/scripts/set-mode.sh" /usr/local/bin/hmdistreamer-set-mode
+install -m 0755 "${REPO_ROOT}/scripts/profile-performance.sh" /usr/local/bin/hmdistreamer-profile-performance
 
 echo "Installing systemd units..."
 install -m 0644 "${REPO_ROOT}/systemd/hmdistreamer-hdmi-bringup.service" /etc/systemd/system/hmdistreamer-hdmi-bringup.service

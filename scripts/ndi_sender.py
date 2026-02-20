@@ -44,6 +44,8 @@ class SenderConfig:
     no_frame_restart_sec: float = 3.0
     capture_backend: str = "gstreamer"
     ndi_send_async: bool = True
+    ndi_safe_copy: bool = True
+    ndi_async_safe_copy: bool = True
     ndi_clock_video: bool = True
     ffmpeg_path: str = "ffmpeg"
     ffmpeg_loglevel: str = "error"
@@ -58,6 +60,38 @@ class SenderConfig:
     gst_input_format: str = "RGB"
     gst_output_format: str = "BGRx"
     log_level: str = "INFO"
+
+
+@dataclass
+class WindowMetric:
+    count: int = 0
+    total: float = 0.0
+    minimum: float = float("inf")
+    maximum: float = 0.0
+
+    def add(self, value: float) -> None:
+        self.count += 1
+        self.total += value
+        if value < self.minimum:
+            self.minimum = value
+        if value > self.maximum:
+            self.maximum = value
+
+    def avg(self) -> float:
+        if self.count == 0:
+            return 0.0
+        return self.total / self.count
+
+    def summary(self) -> tuple[float, float, float]:
+        if self.count == 0:
+            return (0.0, 0.0, 0.0)
+        return (self.minimum, self.avg(), self.maximum)
+
+    def reset(self) -> None:
+        self.count = 0
+        self.total = 0.0
+        self.minimum = float("inf")
+        self.maximum = 0.0
 
 
 def parse_bool(value: str) -> bool:
@@ -104,6 +138,8 @@ def build_config(config_path: Path) -> SenderConfig:
         "HMDI_NO_FRAME_RESTART_SEC": "no_frame_restart_sec",
         "HMDI_CAPTURE_BACKEND": "capture_backend",
         "HMDI_NDI_SEND_ASYNC": "ndi_send_async",
+        "HMDI_NDI_SAFE_COPY": "ndi_safe_copy",
+        "HMDI_NDI_ASYNC_SAFE_COPY": "ndi_async_safe_copy",
         "HMDI_NDI_CLOCK_VIDEO": "ndi_clock_video",
         "HMDI_FFMPEG_PATH": "ffmpeg_path",
         "HMDI_FFMPEG_LOGLEVEL": "ffmpeg_loglevel",
@@ -255,6 +291,11 @@ class BaseHDMIToNDISender:
         if self.sender is None:
             raise RuntimeError("NDI sender is not initialized")
         payload = self.frame_buffer if frame_data is None else frame_data
+        if self.cfg.ndi_safe_copy and (not self.cfg.ndi_send_async or self.cfg.ndi_async_safe_copy):
+            # cyndilib may continue reading frame memory after write_video()/write_video_async
+            # returns. Use a dedicated writable copy per frame to prevent data races and
+            # partial-frame corruption from buffer reuse.
+            payload = bytearray(payload)
         if self.cfg.ndi_send_async:
             ok = self.sender.write_video_async(payload)
         else:
@@ -336,18 +377,21 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
         last_frame_time = time.monotonic()
         fps_window_start = last_frame_time
         fps_window_count = 0
-        age_window_count = 0
-        age_window_sum_ms = 0.0
-        age_window_min_ms = float("inf")
-        age_window_max_ms = 0.0
+        age_window = WindowMetric()
+        appsink_wait_window = WindowMetric()
+        copy_window = WindowMetric()
+        send_window = WindowMetric()
+        frame_proc_window = WindowMetric()
 
         logging.info("NDI sender '%s' is running (backend=gstreamer)", self.cfg.ndi_name)
         while not self.stop_event.is_set():
             self.check_bus()
+            pull_start = time.monotonic()
             sample = self.appsink.emit("try-pull-sample", timeout_ns)
-            now = time.monotonic()
+            pull_end = time.monotonic()
+            appsink_wait_window.add((pull_end - pull_start) * 1000.0)
             if sample is None:
-                if now - last_frame_time > self.cfg.no_frame_restart_sec:
+                if pull_end - last_frame_time > self.cfg.no_frame_restart_sec:
                     raise RuntimeError(
                         f"No video frames received for {self.cfg.no_frame_restart_sec:.1f}s"
                     )
@@ -362,6 +406,7 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                 continue
 
             try:
+                frame_start = time.monotonic()
                 mapped_size = getattr(map_info, "size", len(map_info.data))
                 if mapped_size != self.expected_bytes:
                     logging.warning(
@@ -371,8 +416,16 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                     )
                     continue
 
+                copy_start = time.monotonic()
                 self.frame_buffer_view[:] = map_info.data
+                copy_end = time.monotonic()
+                copy_window.add((copy_end - copy_start) * 1000.0)
+
+                send_start = time.monotonic()
                 self.send_frame()
+                send_end = time.monotonic()
+                send_window.add((send_end - send_start) * 1000.0)
+                frame_proc_window.add((send_end - frame_start) * 1000.0)
 
                 # Approximate local pipeline queueing delay from capture timestamp to send call.
                 # PTS is in pipeline running-time domain.
@@ -383,40 +436,35 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                         running_time = clock.get_time() - self.pipeline.get_base_time()
                         if running_time >= pts:
                             age_ms = (running_time - pts) / 1_000_000.0
-                            age_window_count += 1
-                            age_window_sum_ms += age_ms
-                            if age_ms < age_window_min_ms:
-                                age_window_min_ms = age_ms
-                            if age_ms > age_window_max_ms:
-                                age_window_max_ms = age_ms
+                            age_window.add(age_ms)
             finally:
                 buffer.unmap(map_info)
 
+            now = time.monotonic()
             last_frame_time = now
             fps_window_count += 1
             if now - fps_window_start >= 5.0:
                 fps = fps_window_count / (now - fps_window_start)
-                if age_window_count > 0:
-                    avg_age_ms = age_window_sum_ms / age_window_count
-                    min_age_ms = age_window_min_ms
-                    max_age_ms = age_window_max_ms
-                else:
-                    avg_age_ms = 0.0
-                    min_age_ms = 0.0
-                    max_age_ms = 0.0
+                min_age_ms, avg_age_ms, max_age_ms = age_window.summary()
                 logging.info(
-                    "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f",
+                    "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
+                    "step ms appsink_wait avg=%.2f map_copy avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f",
                     fps,
                     min_age_ms,
                     avg_age_ms,
                     max_age_ms,
+                    appsink_wait_window.avg(),
+                    copy_window.avg(),
+                    send_window.avg(),
+                    frame_proc_window.avg(),
                 )
                 fps_window_start = now
                 fps_window_count = 0
-                age_window_count = 0
-                age_window_sum_ms = 0.0
-                age_window_min_ms = float("inf")
-                age_window_max_ms = 0.0
+                age_window.reset()
+                appsink_wait_window.reset()
+                copy_window.reset()
+                send_window.reset()
+                frame_proc_window.reset()
 
 
 class FFmpegHDMIToNDISender(BaseHDMIToNDISender):
@@ -529,29 +577,48 @@ class FFmpegHDMIToNDISender(BaseHDMIToNDISender):
         last_frame_time = time.monotonic()
         fps_window_start = last_frame_time
         fps_window_count = 0
+        read_window = WindowMetric()
+        send_window = WindowMetric()
+        frame_proc_window = WindowMetric()
 
         logging.info("NDI sender '%s' is running (backend=ffmpeg)", self.cfg.ndi_name)
         while not self.stop_event.is_set():
             if self.proc.poll() is not None:
                 raise RuntimeError(f"ffmpeg exited unexpectedly (code={self.proc.returncode})")
 
+            read_start = time.monotonic()
             got_frame = self.read_frame(self.cfg.sample_timeout_sec)
-            now = time.monotonic()
+            read_end = time.monotonic()
             if not got_frame:
-                if now - last_frame_time > self.cfg.no_frame_restart_sec:
+                if read_end - last_frame_time > self.cfg.no_frame_restart_sec:
                     raise RuntimeError(
                         f"No video frames received for {self.cfg.no_frame_restart_sec:.1f}s"
                     )
                 continue
 
+            read_window.add((read_end - read_start) * 1000.0)
+            send_start = time.monotonic()
             self.send_frame()
-            last_frame_time = now
+            send_end = time.monotonic()
+            send_window.add((send_end - send_start) * 1000.0)
+            frame_proc_window.add((send_end - read_start) * 1000.0)
+
+            last_frame_time = send_end
             fps_window_count += 1
-            if now - fps_window_start >= 5.0:
-                fps = fps_window_count / (now - fps_window_start)
-                logging.info("Sending %.1f fps", fps)
-                fps_window_start = now
+            if send_end - fps_window_start >= 5.0:
+                fps = fps_window_count / (send_end - fps_window_start)
+                logging.info(
+                    "Sending %.1f fps | step ms frame_read avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f",
+                    fps,
+                    read_window.avg(),
+                    send_window.avg(),
+                    frame_proc_window.avg(),
+                )
+                fps_window_start = send_end
                 fps_window_count = 0
+                read_window.reset()
+                send_window.reset()
+                frame_proc_window.reset()
 
 
 def configure_logging(level_name: str) -> None:
