@@ -12,6 +12,18 @@
   - optional USB device prep controls (`HMDI_USB_SET_FORMAT`, `HMDI_USB_VALIDATE_STREAM`, etc.)
 - USB development handoff document:
   - `Docs/USB_UVC_Handoff.md`
+- `scripts/usb-camera-controls.sh` and installed command `hmdistreamer-usb-controls`:
+  - list/get/set USB UVC controls
+  - quick `manual` / `auto` presets
+- `scripts/set-usb-profile.sh` and installed command `hmdistreamer-set-usb-profile`:
+  - microscope-oriented USB profiles (`microscope-latency`, `microscope-detail`)
+  - writes low-latency sender + pipeline + manual-control defaults into `/etc/hmdistreamer/hmdistreamer.env`
+- `scripts/camera-control-ui.py` and optional service `hmdistreamer-camera-ui.service`:
+  - browser UI for USB camera controls
+  - live apply + manual/auto presets + persist-to-startup defaults
+  - sender latency panel in UI (`fps`, `connections`, sender-side latency metrics)
+  - auto-apply control changes without pressing Apply
+  - numeric camera controls now expose slider + direct numeric entry (synced)
 
 ### Changed
 
@@ -19,21 +31,32 @@
   - `ExecStartPre` now uses `/usr/local/bin/hmdistreamer-source-prepare` instead of hardwiring HDMI bring-up.
 - `scripts/install-systemd.sh`
   - now installs `scripts/prepare-video-source.sh` to `/usr/local/bin/hmdistreamer-source-prepare`.
+  - now installs optional camera UI executable + systemd unit.
 - `scripts/ndi_sender.py`
   - adds `gst_source_pipeline` override support to allow custom source graphs (for example USB MJPEG decode) while keeping sender loop/telemetry unchanged.
   - adds env override key `HMDI_GST_SOURCE_PIPELINE`.
+  - sender periodic telemetry now reports active NDI receiver count (`connections=N`) to help diagnose downstream latency/backpressure from multiple clients.
+- `scripts/prepare-video-source.sh`
+  - USB path now supports startup control application:
+    - `HMDI_USB_APPLY_CONTROLS`
+    - `HMDI_USB_CONTROL_PRESET`
+    - `HMDI_USB_SET_CTRLS`
+  - default USB preset is now manual exposure + manual white balance when no explicit control set is provided.
 - `scripts/profile-performance.sh`
   - now runs `/usr/local/bin/hmdistreamer-source-prepare` instead of `/usr/local/bin/hmdistreamer-hdmi-bringup`.
 - `scripts/hmdistreamer-diagnostics.sh`
   - source-aware behavior for `HMDI_INPUT_KIND`, including conditional HDMI timing checks.
   - process inspection now includes `hmdistreamer-source-prepare`.
+  - USB mode now reports control state snapshot in diagnostics output.
 - `config/hmdistreamer.env.example`
   - documents source selection (`HMDI_INPUT_KIND`) and USB prep options.
   - documents `HMDI_GST_SOURCE_PIPELINE` override.
+  - documents USB manual-control startup settings.
 - `config/ndi_sender.toml.example`
   - adds `gst_source_pipeline` configuration key with USB/MJPEG example.
 - `Docs/Deployment.md`
   - updated from HDMI-only assumptions to source-aware startup and USB quick-start guidance.
+  - added USB microscope tested profile guidance and measured latency snapshot.
 - `Docs/RPi5_X1300_HDMI_to_NDI_Handoff.md`
   - marked as historical and linked to current deployment/handoff docs.
 

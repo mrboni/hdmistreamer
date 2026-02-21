@@ -19,11 +19,15 @@ Add USB webcam ingest while preserving the same low-latency/high-throughput desi
 - Source prep entrypoint: `/usr/local/bin/hmdistreamer-source-prepare`
   - `HMDI_INPUT_KIND=hdmi-csi` delegates to HDMI bring-up
   - `HMDI_INPUT_KIND=usb-uvc` prepares/validates USB capture device
+  - startup USB control application (`HMDI_USB_APPLY_CONTROLS`, `HMDI_USB_CONTROL_PRESET`, `HMDI_USB_SET_CTRLS`)
 - Sender: `/usr/local/bin/hmdistreamer-ndi-sender`
   - `capture_backend=gstreamer` (default, preferred)
   - latency telemetry in logs (`capture->send age`, step timings)
   - optional `HMDI_GST_SOURCE_PIPELINE` for custom webcam graphs (MJPEG decode, etc)
 - Profiling helper: `/usr/local/bin/hmdistreamer-profile-performance`
+- USB profile helper: `/usr/local/bin/hmdistreamer-set-usb-profile`
+- USB control helper: `/usr/local/bin/hmdistreamer-usb-controls`
+- USB control web UI service: `/usr/local/bin/hmdistreamer-camera-ui` (`hmdistreamer-camera-ui.service`)
 
 ## Recommended Development Sequence
 
@@ -47,27 +51,39 @@ Set in `/etc/hmdistreamer/hmdistreamer.env`:
 ```bash
 HMDI_INPUT_KIND=usb-uvc
 HMDI_VIDEO_DEVICE=/dev/videoX
-HMDI_WIDTH=1920
-HMDI_HEIGHT=1080
-HMDI_FPS_NUM=60
+HMDI_WIDTH=1280
+HMDI_HEIGHT=720
+HMDI_FPS_NUM=30
 HMDI_FPS_DEN=1
 HMDI_NDI_FOURCC=UYVY
 HMDI_GST_INPUT_FORMAT=UYVY
 HMDI_GST_OUTPUT_FORMAT=UYVY
+HMDI_GST_SOURCE_PIPELINE=v4l2src device=/dev/videoX io-mode=mmap do-timestamp=true ! image/jpeg,width=1280,height=720,framerate=30/1 ! jpegdec ! videoconvert n-threads=4 ! video/x-raw,format=UYVY,width=1280,height=720,framerate=30/1
+HMDI_APPSINK_MAX_BUFFERS=1
+HMDI_GST_USE_LEAKY_QUEUE=1
+HMDI_GST_QUEUE_MAX_BUFFERS=1
+HMDI_NDI_SEND_ASYNC=1
+HMDI_NDI_SAFE_COPY=0
+HMDI_NDI_ASYNC_SAFE_COPY=0
+HMDI_NDI_CLOCK_VIDEO=0
+HMDI_DROP_STALE_MS=45
+HMDI_USB_APPLY_CONTROLS=1
+HMDI_USB_CONTROL_PRESET=manual
+HMDI_USB_SET_CTRLS=auto_exposure=1,exposure_time_absolute=157,exposure_dynamic_framerate=0,white_balance_automatic=0,white_balance_temperature=4600,power_line_frequency=2,gain=0
 ```
 
-Optional when needed:
+For higher detail on this microscope:
 
 ```bash
-HMDI_GST_SOURCE_PIPELINE=v4l2src device=/dev/videoX io-mode=mmap do-timestamp=true ! image/jpeg,width=1920,height=1080,framerate=60/1 ! jpegdec ! videoconvert ! video/x-raw,format=UYVY,width=1920,height=1080,framerate=60/1
+sudo hmdistreamer-set-usb-profile microscope-detail --device /dev/video0
 ```
 
 ## Performance Guardrails
 
-For 1080p60 class USB sources on this hardware:
+For this USB microscope class on this hardware:
 
-- Throughput target: near source FPS (or clearly documented device limit)
-- Latency target: `capture->send age` roughly bounded near one frame period under steady state
+- Throughput target: near 30 fps steady-state
+- Latency target: `capture->send age` roughly `~39 ms` at `1280x720` or `~55 ms` at `1600x1200`
 - Stability target: no service restarts, no persistent stale-drop growth
 
 ## Acceptance Checklist
@@ -81,3 +97,8 @@ For 1080p60 class USB sources on this hardware:
 
 - Keep HDMI/X1300 baseline behavior intact while adding USB support.
 - Avoid broad rewrites; preserve existing telemetry and profiling comparability.
+- Manual controls can be tuned live with:
+  - `hmdistreamer-usb-controls preset manual`
+  - `hmdistreamer-usb-controls set exposure_time_absolute=140 white_balance_temperature=4700 gain=3`
+- Or via browser UI at `http://<pi-ip>:8787` when `hmdistreamer-camera-ui.service` is enabled.
+  - UI auto-applies control changes by default and includes a sender latency panel.

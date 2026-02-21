@@ -46,11 +46,15 @@ install -m 0755 "${REPO_ROOT}/scripts/prepare-video-source.sh" /usr/local/bin/hm
 install -m 0755 "${REPO_ROOT}/scripts/ndi_sender.py" /usr/local/bin/hmdistreamer-ndi-sender
 install -m 0755 "${REPO_ROOT}/scripts/hmdistreamer-diagnostics.sh" /usr/local/bin/hmdistreamer-diagnostics
 install -m 0755 "${REPO_ROOT}/scripts/set-mode.sh" /usr/local/bin/hmdistreamer-set-mode
+install -m 0755 "${REPO_ROOT}/scripts/set-usb-profile.sh" /usr/local/bin/hmdistreamer-set-usb-profile
+install -m 0755 "${REPO_ROOT}/scripts/usb-camera-controls.sh" /usr/local/bin/hmdistreamer-usb-controls
+install -m 0755 "${REPO_ROOT}/scripts/camera-control-ui.py" /usr/local/bin/hmdistreamer-camera-ui
 install -m 0755 "${REPO_ROOT}/scripts/profile-performance.sh" /usr/local/bin/hmdistreamer-profile-performance
 
 echo "Installing systemd units..."
 install -m 0644 "${REPO_ROOT}/systemd/hmdistreamer-hdmi-bringup.service" /etc/systemd/system/hmdistreamer-hdmi-bringup.service
 install -m 0644 "${REPO_ROOT}/systemd/hmdistreamer-ndi-sender.service" /etc/systemd/system/hmdistreamer-ndi-sender.service
+install -m 0644 "${REPO_ROOT}/systemd/hmdistreamer-camera-ui.service" /etc/systemd/system/hmdistreamer-camera-ui.service
 
 echo "Reloading systemd and enabling services..."
 systemctl daemon-reload
@@ -62,3 +66,4 @@ echo "Next:"
 echo "  1) Install dependencies listed in Docs/Deployment.md"
 echo "  2) Start service: sudo systemctl start hmdistreamer-ndi-sender.service"
 echo "  3) Check logs:     sudo journalctl -u hmdistreamer-ndi-sender.service -f"
+echo "  4) Optional camera UI: sudo systemctl enable --now hmdistreamer-camera-ui.service"
