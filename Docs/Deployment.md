@@ -167,10 +167,22 @@ Capabilities:
 - enumerate controls (`v4l2-ctl --list-ctrls-menus` under the hood)
 - apply control values live (auto-apply on control change)
 - toggle auto-apply off if you prefer batching and explicit Apply
-- apply manual/auto presets
-- persist startup defaults to `/etc/hmdistreamer/hmdistreamer.env` (`HMDI_USB_SET_CTRLS`)
+- apply presets (manual/auto by default; configurable/disable-able via env)
+- persist startup defaults to `/etc/hmdistreamer/hmdistreamer.env` (key is configurable; default `HMDI_USB_SET_CTRLS`)
 - restart sender service from UI
 - show sender latency panel (`fps`, `connections`, `capture->send age`, `ndi_send`, `stale_drop`)
+
+Portability / hardening knobs:
+
+- `HMDI_CAMERA_UI_ENABLE_PRESETS=0` to hide/disable preset actions.
+- `HMDI_CAMERA_UI_ENABLE_PERSIST=0` to hide/disable persist actions.
+- remap persist target keys for non-USB workflows:
+  - `HMDI_CAMERA_UI_PERSIST_ENABLE_KEY`
+  - `HMDI_CAMERA_UI_PERSIST_PRESET_KEY`
+  - `HMDI_CAMERA_UI_PERSIST_SETCTRLS_KEY`
+  - `HMDI_CAMERA_UI_PERSIST_PRESET_VALUE`
+- `HMDI_CAMERA_UI_PRESET_MANUAL_JSON` / `HMDI_CAMERA_UI_PRESET_AUTO_JSON` to override preset payloads.
+- command hardening: `HMDI_CAMERA_UI_CMD_TIMEOUT_SEC`, `HMDI_CAMERA_UI_MAX_REQUEST_BYTES`.
 
 Optional security:
 

@@ -102,3 +102,6 @@ For this USB microscope class on this hardware:
   - `hmdistreamer-usb-controls set exposure_time_absolute=140 white_balance_temperature=4700 gain=3`
 - Or via browser UI at `http://<pi-ip>:8787` when `hmdistreamer-camera-ui.service` is enabled.
   - UI auto-applies control changes by default and includes a sender latency panel.
+  - UI presets/persist are now env-configurable for branch portability:
+    - disable with `HMDI_CAMERA_UI_ENABLE_PRESETS=0` and/or `HMDI_CAMERA_UI_ENABLE_PERSIST=0`
+    - remap persistence keys with `HMDI_CAMERA_UI_PERSIST_*` variables when not using USB startup keys.

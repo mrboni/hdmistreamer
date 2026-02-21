@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 import logging
 import os
+import shutil
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,12 +36,20 @@ SENDER_METRIC_RE = re.compile(
 )
 
 
+def env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    return normalized not in {"0", "false", "no", "off"}
+
+
 INDEX_HTML = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HDMIStreamer Camera Controls</title>
+  <title>HDMIStreamer Video Controls</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -172,7 +181,7 @@ INDEX_HTML = """<!doctype html>
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Camera Controls</h1>
+      <h1>Video Controls</h1>
       <div class="meta" id="meta">Loading...</div>
       <div class="toolbar">
         <button id="refreshBtn">Refresh</button>
@@ -182,7 +191,7 @@ INDEX_HTML = """<!doctype html>
         <button id="persistBtn">Persist Current</button>
         <button id="restartBtn" class="warn">Restart NDI Sender</button>
         <label class="meta"><input id="autoApplyToggle" type="checkbox" checked> auto-apply on change</label>
-        <label class="meta"><input id="persistToggle" type="checkbox" checked> persist on change/apply/preset</label>
+        <label id="persistToggleLabel" class="meta"><input id="persistToggle" type="checkbox" checked> persist on change/apply/preset</label>
       </div>
       <div class="toolbar">
         <label class="meta">API token (optional):</label>
@@ -234,8 +243,16 @@ INDEX_HTML = """<!doctype html>
       body: document.getElementById("controlsBody"),
       status: document.getElementById("status"),
       autoApplyToggle: document.getElementById("autoApplyToggle"),
+      persistToggleLabel: document.getElementById("persistToggleLabel"),
       persistToggle: document.getElementById("persistToggle"),
       tokenInput: document.getElementById("tokenInput"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      applyBtn: document.getElementById("applyBtn"),
+      manualBtn: document.getElementById("manualBtn"),
+      autoBtn: document.getElementById("autoBtn"),
+      persistBtn: document.getElementById("persistBtn"),
+      restartBtn: document.getElementById("restartBtn"),
+      saveTokenBtn: document.getElementById("saveTokenBtn"),
       latSenderState: document.getElementById("latSenderState"),
       latFps: document.getElementById("latFps"),
       latConnections: document.getElementById("latConnections"),
@@ -249,6 +266,30 @@ INDEX_HTML = """<!doctype html>
     function setStatus(msg, ok = true) {
       el.status.textContent = msg;
       el.status.className = "status " + (ok ? "ok" : "err");
+    }
+
+    function supportsPersist() {
+      return Boolean(state.config && state.config.features && state.config.features.persist);
+    }
+
+    function supportsPresets() {
+      return Boolean(state.config && state.config.features && state.config.features.presets);
+    }
+
+    function persistRequested() {
+      return supportsPersist() && el.persistToggle.checked;
+    }
+
+    function updateFeatureVisibility() {
+      const persistVisible = supportsPersist();
+      const presetsVisible = supportsPresets();
+      el.manualBtn.style.display = presetsVisible ? "" : "none";
+      el.autoBtn.style.display = presetsVisible ? "" : "none";
+      el.persistBtn.style.display = persistVisible ? "" : "none";
+      el.persistToggleLabel.style.display = persistVisible ? "" : "none";
+      if (!persistVisible) {
+        el.persistToggle.checked = false;
+      }
     }
 
     async function api(path, opts = {}) {
@@ -343,12 +384,17 @@ INDEX_HTML = """<!doctype html>
       if (value === null) {
         return;
       }
-      const persist = el.persistToggle.checked;
+      const persist = persistRequested();
       const payload = { values: { [control.name]: value }, persist };
       const data = await api("/api/apply", {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      if (data.persist_error) {
+        setStatus(`Applied ${control.name}=${value}; persist failed`, false);
+        await refreshAll();
+        return;
+      }
       const failed = Object.keys(data.failed || {}).length;
       if (failed) {
         setStatus(`Failed to apply ${control.name}`, false);
@@ -455,7 +501,10 @@ INDEX_HTML = """<!doctype html>
     async function refreshAll() {
       const config = await api("/api/config");
       state.config = config;
-      el.meta.textContent = `device=${config.device} | sender=${config.sender_service} (${config.sender_state}) | token_required=${config.token_required}`;
+      updateFeatureVisibility();
+      const presetsSummary = (config.preset_names || []).join(",") || "off";
+      const persistSummary = config.features && config.features.persist ? "on" : "off";
+      el.meta.textContent = `device=${config.device} | sender=${config.sender_service} (${config.sender_state}) | presets=${presetsSummary} | persist=${persistSummary} | token_required=${config.token_required}`;
       const data = await api("/api/controls");
       state.controls = data.controls || [];
       renderControls();
@@ -465,11 +514,16 @@ INDEX_HTML = """<!doctype html>
 
     async function applyAll() {
       const values = collectValues();
-      const persist = el.persistToggle.checked;
+      const persist = persistRequested();
       const data = await api("/api/apply", {
         method: "POST",
         body: JSON.stringify({ values, persist }),
       });
+      if (data.persist_error) {
+        setStatus("Applied controls but persist failed", false);
+        await refreshAll();
+        return;
+      }
       const failed = Object.keys(data.failed || {}).length;
       if (failed) {
         setStatus(`Applied with ${failed} failures`, false);
@@ -480,11 +534,20 @@ INDEX_HTML = """<!doctype html>
     }
 
     async function applyPreset(name) {
-      const persist = el.persistToggle.checked;
+      if (!supportsPresets()) {
+        setStatus("Presets are disabled", false);
+        return;
+      }
+      const persist = persistRequested();
       const data = await api("/api/preset", {
         method: "POST",
         body: JSON.stringify({ name, persist }),
       });
+      if (data.persist_error) {
+        setStatus(`Preset ${name} applied but persist failed`, false);
+        await refreshAll();
+        return;
+      }
       const failed = Object.keys(data.failed || {}).length;
       if (failed) {
         setStatus(`Preset ${name}: ${failed} failures`, false);
@@ -495,6 +558,10 @@ INDEX_HTML = """<!doctype html>
     }
 
     async function persistCurrent() {
+      if (!supportsPersist()) {
+        setStatus("Persistence is disabled", false);
+        return;
+      }
       await api("/api/persist-current", { method: "POST", body: "{}" });
       setStatus("Persisted current controls to startup defaults", true);
     }
@@ -505,13 +572,13 @@ INDEX_HTML = """<!doctype html>
       await refreshAll();
     }
 
-    document.getElementById("refreshBtn").onclick = () => refreshAll().catch(err => setStatus(err.message, false));
-    document.getElementById("applyBtn").onclick = () => applyAll().catch(err => setStatus(err.message, false));
-    document.getElementById("manualBtn").onclick = () => applyPreset("manual").catch(err => setStatus(err.message, false));
-    document.getElementById("autoBtn").onclick = () => applyPreset("auto").catch(err => setStatus(err.message, false));
-    document.getElementById("persistBtn").onclick = () => persistCurrent().catch(err => setStatus(err.message, false));
-    document.getElementById("restartBtn").onclick = () => restartSender().catch(err => setStatus(err.message, false));
-    document.getElementById("saveTokenBtn").onclick = () => {
+    el.refreshBtn.onclick = () => refreshAll().catch(err => setStatus(err.message, false));
+    el.applyBtn.onclick = () => applyAll().catch(err => setStatus(err.message, false));
+    el.manualBtn.onclick = () => applyPreset("manual").catch(err => setStatus(err.message, false));
+    el.autoBtn.onclick = () => applyPreset("auto").catch(err => setStatus(err.message, false));
+    el.persistBtn.onclick = () => persistCurrent().catch(err => setStatus(err.message, false));
+    el.restartBtn.onclick = () => restartSender().catch(err => setStatus(err.message, false));
+    el.saveTokenBtn.onclick = () => {
       state.token = el.tokenInput.value.trim();
       localStorage.setItem("hmdi_ui_token", state.token);
       refreshAll().catch(err => setStatus(err.message, false));
@@ -538,6 +605,14 @@ class UIServerConfig:
     env_file: Path
     sender_service: str
     auth_token: str
+    command_timeout_sec: float
+    max_request_bytes: int
+    persist_enabled: bool
+    persist_enable_key: str
+    persist_preset_key: str
+    persist_setctrls_key: str
+    persist_preset_value: str
+    presets: dict[str, dict[str, Any]]
 
 
 class CameraControlHTTPServer(ThreadingHTTPServer):
@@ -546,13 +621,22 @@ class CameraControlHTTPServer(ThreadingHTTPServer):
         self.cfg = cfg
 
 
-def run_command(command: list[str]) -> str:
-    result = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+def run_command(command: list[str], timeout_sec: float = 5.0) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except FileNotFoundError as exc:
+        raise CameraControlError(f"Command not found: {command[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CameraControlError(
+            f"Command timed out after {timeout_sec:.1f}s: {' '.join(command)}"
+        ) from exc
+
     if result.returncode != 0:
         raise CameraControlError(
             f"Command failed ({result.returncode}): {' '.join(command)}\n{result.stderr.strip()}"
@@ -627,8 +711,8 @@ def parse_controls(raw_text: str) -> list[dict[str, Any]]:
     return controls
 
 
-def get_controls(device: str) -> list[dict[str, Any]]:
-    text = run_command(["v4l2-ctl", "-d", device, "--list-ctrls-menus"])
+def get_controls(device: str, timeout_sec: float) -> list[dict[str, Any]]:
+    text = run_command(["v4l2-ctl", "-d", device, "--list-ctrls-menus"], timeout_sec)
     return parse_controls(text)
 
 
@@ -670,6 +754,7 @@ def apply_control_values(
     device: str,
     controls: list[dict[str, Any]],
     values: dict[str, Any],
+    timeout_sec: float,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     known = control_map(controls)
     applied: dict[str, Any] = {}
@@ -689,7 +774,10 @@ def apply_control_values(
 
         try:
             value = coerce_control_value(raw_value, ctrl)
-            run_command(["v4l2-ctl", "-d", device, "--set-ctrl", f"{name}={value}"])
+            run_command(
+                ["v4l2-ctl", "-d", device, "--set-ctrl", f"{name}={value}"],
+                timeout_sec,
+            )
             applied[name] = value
         except Exception as exc:  # noqa: BLE001
             failed[name] = str(exc)
@@ -726,11 +814,18 @@ def upsert_env_key(path: Path, key: str, value: str) -> None:
     path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
 
 
-def persist_controls(env_file: Path, values: dict[str, Any]) -> str:
+def persist_controls(cfg: UIServerConfig, values: dict[str, Any]) -> str:
+    if not cfg.persist_enabled:
+        raise CameraControlError("persistence is disabled")
+    if not cfg.persist_setctrls_key.strip():
+        raise CameraControlError("persistence key for controls is not configured")
+
     spec = ",".join(f"{name}={values[name]}" for name in sorted(values))
-    upsert_env_key(env_file, "HMDI_USB_APPLY_CONTROLS", "1")
-    upsert_env_key(env_file, "HMDI_USB_CONTROL_PRESET", "manual")
-    upsert_env_key(env_file, "HMDI_USB_SET_CTRLS", spec)
+    if cfg.persist_enable_key.strip():
+        upsert_env_key(cfg.env_file, cfg.persist_enable_key, "1")
+    if cfg.persist_preset_key.strip() and cfg.persist_preset_value.strip():
+        upsert_env_key(cfg.env_file, cfg.persist_preset_key, cfg.persist_preset_value)
+    upsert_env_key(cfg.env_file, cfg.persist_setctrls_key, spec)
     return spec
 
 
@@ -770,13 +865,34 @@ def auto_preset_values() -> dict[str, Any]:
     }
 
 
-def sender_state(service_name: str) -> str:
-    result = subprocess.run(
-        ["systemctl", "is-active", service_name],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+def parse_preset_json(raw: str, label: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CameraControlError(f"{label} is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise CameraControlError(f"{label} must be a JSON object")
+
+    out: dict[str, Any] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str) or not SAFE_CONTROL_RE.match(key):
+            raise CameraControlError(f"{label} contains invalid control name: {key!r}")
+        out[key] = value
+    return out
+
+
+def sender_state(service_name: str, timeout_sec: float) -> str:
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", service_name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return "unknown"
+
     state = result.stdout.strip()
     if state:
         return state
@@ -801,9 +917,12 @@ def _to_float(raw: str | None, fallback: float = 0.0) -> float:
         return fallback
 
 
-def latest_sender_metrics(service_name: str) -> dict[str, Any] | None:
+def latest_sender_metrics(service_name: str, timeout_sec: float) -> dict[str, Any] | None:
     try:
-        text = run_command(["journalctl", "-u", service_name, "-n", "120", "--no-pager"])
+        text = run_command(
+            ["journalctl", "-u", service_name, "-n", "120", "--no-pager"],
+            timeout_sec,
+        )
     except Exception:  # noqa: BLE001
         return None
 
@@ -859,9 +978,17 @@ class CameraControlHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0"))
+        content_length = self.headers.get("Content-Length", "0")
+        try:
+            length = int(content_length)
+        except ValueError as exc:
+            raise CameraControlError("invalid Content-Length") from exc
         if length <= 0:
             return {}
+        if length > self.server.cfg.max_request_bytes:
+            raise CameraControlError(
+                f"request body too large ({length} > {self.server.cfg.max_request_bytes})"
+            )
         data = self.rfile.read(length)
         if not data:
             return {}
@@ -900,27 +1027,49 @@ class CameraControlHandler(BaseHTTPRequestHandler):
 
         try:
             if path == "/api/config":
+                preset_names = sorted(self.server.cfg.presets.keys())
+                persist_enabled = (
+                    self.server.cfg.persist_enabled
+                    and bool(self.server.cfg.persist_setctrls_key.strip())
+                )
                 self.send_json(
                     HTTPStatus.OK,
                     {
                         "device": self.server.cfg.device,
                         "env_file": str(self.server.cfg.env_file),
                         "sender_service": self.server.cfg.sender_service,
-                        "sender_state": sender_state(self.server.cfg.sender_service),
+                        "sender_state": sender_state(
+                            self.server.cfg.sender_service,
+                            self.server.cfg.command_timeout_sec,
+                        ),
                         "token_required": bool(self.server.cfg.auth_token.strip()),
+                        "features": {
+                            "presets": bool(preset_names),
+                            "persist": persist_enabled,
+                        },
+                        "preset_names": preset_names,
                     },
                 )
                 return
             if path == "/api/controls":
-                controls = get_controls(self.server.cfg.device)
+                controls = get_controls(
+                    self.server.cfg.device,
+                    self.server.cfg.command_timeout_sec,
+                )
                 self.send_json(HTTPStatus.OK, {"controls": controls})
                 return
             if path == "/api/latency":
                 self.send_json(
                     HTTPStatus.OK,
                     {
-                        "sender_state": sender_state(self.server.cfg.sender_service),
-                        "metrics": latest_sender_metrics(self.server.cfg.sender_service),
+                        "sender_state": sender_state(
+                            self.server.cfg.sender_service,
+                            self.server.cfg.command_timeout_sec,
+                        ),
+                        "metrics": latest_sender_metrics(
+                            self.server.cfg.sender_service,
+                            self.server.cfg.command_timeout_sec,
+                        ),
                     },
                 )
                 return
@@ -941,55 +1090,76 @@ class CameraControlHandler(BaseHTTPRequestHandler):
                 values_raw = body.get("values", {})
                 if not isinstance(values_raw, dict):
                     raise CameraControlError("values must be an object")
-                controls = get_controls(self.server.cfg.device)
+                controls = get_controls(
+                    self.server.cfg.device,
+                    self.server.cfg.command_timeout_sec,
+                )
                 applied, failed = apply_control_values(
                     self.server.cfg.device,
                     controls,
                     values_raw,
+                    self.server.cfg.command_timeout_sec,
                 )
                 persisted_spec = None
+                persist_error = None
                 if bool(body.get("persist")) and applied:
-                    persisted_spec = persist_controls(self.server.cfg.env_file, applied)
+                    try:
+                        persisted_spec = persist_controls(self.server.cfg, applied)
+                    except CameraControlError as exc:
+                        persist_error = str(exc)
                 self.send_json(
                     HTTPStatus.OK,
                     {
                         "applied": applied,
                         "failed": failed,
                         "persisted_spec": persisted_spec,
+                        "persist_error": persist_error,
                     },
                 )
                 return
 
             if path == "/api/preset":
                 name = str(body.get("name", "")).strip().lower()
-                if name == "manual":
-                    values = manual_preset_values()
-                elif name == "auto":
-                    values = auto_preset_values()
-                else:
-                    raise CameraControlError("preset must be 'manual' or 'auto'")
+                if not self.server.cfg.presets:
+                    raise CameraControlError("presets are disabled")
+                if name not in self.server.cfg.presets:
+                    supported = ", ".join(sorted(self.server.cfg.presets.keys()))
+                    raise CameraControlError(f"unknown preset '{name}' (supported: {supported})")
+                values = dict(self.server.cfg.presets[name])
 
-                controls = get_controls(self.server.cfg.device)
+                controls = get_controls(
+                    self.server.cfg.device,
+                    self.server.cfg.command_timeout_sec,
+                )
                 applied, failed = apply_control_values(
                     self.server.cfg.device,
                     controls,
                     values,
+                    self.server.cfg.command_timeout_sec,
                 )
                 persisted_spec = None
+                persist_error = None
                 if bool(body.get("persist", True)) and applied:
-                    persisted_spec = persist_controls(self.server.cfg.env_file, applied)
+                    try:
+                        persisted_spec = persist_controls(self.server.cfg, applied)
+                    except CameraControlError as exc:
+                        persist_error = str(exc)
                 self.send_json(
                     HTTPStatus.OK,
                     {
                         "applied": applied,
                         "failed": failed,
                         "persisted_spec": persisted_spec,
+                        "persist_error": persist_error,
                     },
                 )
                 return
 
             if path == "/api/persist-current":
-                controls = get_controls(self.server.cfg.device)
+                controls = get_controls(
+                    self.server.cfg.device,
+                    self.server.cfg.command_timeout_sec,
+                )
                 values: dict[str, Any] = {}
                 for ctrl in controls:
                     if ctrl.get("read_only"):
@@ -998,15 +1168,23 @@ class CameraControlHandler(BaseHTTPRequestHandler):
                     if value is None:
                         continue
                     values[str(ctrl["name"])] = value
-                spec = persist_controls(self.server.cfg.env_file, values)
+                spec = persist_controls(self.server.cfg, values)
                 self.send_json(HTTPStatus.OK, {"persisted_spec": spec, "count": len(values)})
                 return
 
             if path == "/api/restart-sender":
-                run_command(["systemctl", "restart", self.server.cfg.sender_service])
+                run_command(
+                    ["systemctl", "restart", self.server.cfg.sender_service],
+                    self.server.cfg.command_timeout_sec,
+                )
                 self.send_json(
                     HTTPStatus.OK,
-                    {"sender_state": sender_state(self.server.cfg.sender_service)},
+                    {
+                        "sender_state": sender_state(
+                            self.server.cfg.sender_service,
+                            self.server.cfg.command_timeout_sec,
+                        )
+                    },
                 )
                 return
 
@@ -1019,7 +1197,7 @@ class CameraControlHandler(BaseHTTPRequestHandler):
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="USB camera control web UI")
+    parser = argparse.ArgumentParser(description="HDMIStreamer video control web UI")
     parser.add_argument(
         "--host",
         default=os.getenv("HMDI_CAMERA_UI_HOST", "0.0.0.0"),
@@ -1052,6 +1230,60 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Optional API token (clients must send X-Auth-Token)",
     )
     parser.add_argument(
+        "--command-timeout-sec",
+        type=float,
+        default=float(os.getenv("HMDI_CAMERA_UI_CMD_TIMEOUT_SEC", "5.0")),
+        help="Timeout for external commands",
+    )
+    parser.add_argument(
+        "--max-request-bytes",
+        type=int,
+        default=int(os.getenv("HMDI_CAMERA_UI_MAX_REQUEST_BYTES", "65536")),
+        help="Maximum accepted JSON request body size",
+    )
+    parser.add_argument(
+        "--disable-presets",
+        action="store_true",
+        default=not env_flag("HMDI_CAMERA_UI_ENABLE_PRESETS", True),
+        help="Disable preset endpoints and buttons",
+    )
+    parser.add_argument(
+        "--disable-persist",
+        action="store_true",
+        default=not env_flag("HMDI_CAMERA_UI_ENABLE_PERSIST", True),
+        help="Disable startup-persistence actions",
+    )
+    parser.add_argument(
+        "--persist-enable-key",
+        default=os.getenv("HMDI_CAMERA_UI_PERSIST_ENABLE_KEY", "HMDI_USB_APPLY_CONTROLS"),
+        help="Env key to mark startup control application enabled",
+    )
+    parser.add_argument(
+        "--persist-preset-key",
+        default=os.getenv("HMDI_CAMERA_UI_PERSIST_PRESET_KEY", "HMDI_USB_CONTROL_PRESET"),
+        help="Env key used to record selected preset name",
+    )
+    parser.add_argument(
+        "--persist-setctrls-key",
+        default=os.getenv("HMDI_CAMERA_UI_PERSIST_SETCTRLS_KEY", "HMDI_USB_SET_CTRLS"),
+        help="Env key used to persist control=value pairs",
+    )
+    parser.add_argument(
+        "--persist-preset-value",
+        default=os.getenv("HMDI_CAMERA_UI_PERSIST_PRESET_VALUE", "manual"),
+        help="Preset value persisted alongside control map",
+    )
+    parser.add_argument(
+        "--preset-manual-json",
+        default=os.getenv("HMDI_CAMERA_UI_PRESET_MANUAL_JSON", ""),
+        help="Override manual preset with JSON object",
+    )
+    parser.add_argument(
+        "--preset-auto-json",
+        default=os.getenv("HMDI_CAMERA_UI_PRESET_AUTO_JSON", ""),
+        help="Override auto preset with JSON object",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("HMDI_CAMERA_UI_LOG_LEVEL", "INFO"),
         help="Log level",
@@ -1071,21 +1303,52 @@ def main(argv: list[str]) -> int:
     if not Path(args.device).exists():
         logging.error("Video device does not exist: %s", args.device)
         return 2
+    if shutil.which("v4l2-ctl") is None:
+        logging.error("Missing required command: v4l2-ctl")
+        return 2
+    if args.command_timeout_sec <= 0:
+        logging.error("Invalid --command-timeout-sec: %s", args.command_timeout_sec)
+        return 2
+    if args.max_request_bytes <= 0:
+        logging.error("Invalid --max-request-bytes: %s", args.max_request_bytes)
+        return 2
+
+    manual_values = manual_preset_values()
+    auto_values = auto_preset_values()
+    if str(args.preset_manual_json).strip():
+        manual_values = parse_preset_json(args.preset_manual_json, "--preset-manual-json")
+    if str(args.preset_auto_json).strip():
+        auto_values = parse_preset_json(args.preset_auto_json, "--preset-auto-json")
+
+    presets: dict[str, dict[str, Any]] = {}
+    if not args.disable_presets:
+        presets["manual"] = manual_values
+        presets["auto"] = auto_values
 
     cfg = UIServerConfig(
         device=args.device,
         env_file=Path(args.env_file),
         sender_service=args.sender_service,
         auth_token=args.auth_token,
+        command_timeout_sec=float(args.command_timeout_sec),
+        max_request_bytes=int(args.max_request_bytes),
+        persist_enabled=not bool(args.disable_persist),
+        persist_enable_key=str(args.persist_enable_key).strip(),
+        persist_preset_key=str(args.persist_preset_key).strip(),
+        persist_setctrls_key=str(args.persist_setctrls_key).strip(),
+        persist_preset_value=str(args.persist_preset_value).strip(),
+        presets=presets,
     )
 
     server = CameraControlHTTPServer((args.host, args.port), cfg)
     logging.info(
-        "Camera control UI listening on http://%s:%d (device=%s token_required=%s)",
+        "Camera control UI listening on http://%s:%d (device=%s token_required=%s presets=%s persist=%s)",
         args.host,
         args.port,
         args.device,
         bool(args.auth_token.strip()),
+        ",".join(sorted(cfg.presets.keys())) if cfg.presets else "off",
+        cfg.persist_enabled and bool(cfg.persist_setctrls_key),
     )
     try:
         server.serve_forever()

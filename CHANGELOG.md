@@ -48,15 +48,26 @@
   - source-aware behavior for `HMDI_INPUT_KIND`, including conditional HDMI timing checks.
   - process inspection now includes `hmdistreamer-source-prepare`.
   - USB mode now reports control state snapshot in diagnostics output.
+- `scripts/camera-control-ui.py`
+  - hardened command execution with configurable timeouts (`HMDI_CAMERA_UI_CMD_TIMEOUT_SEC`) and request body cap (`HMDI_CAMERA_UI_MAX_REQUEST_BYTES`).
+  - persistence/preset behavior is now portable via env configuration instead of USB-only hard-coding:
+    - `HMDI_CAMERA_UI_ENABLE_PRESETS`, `HMDI_CAMERA_UI_ENABLE_PERSIST`
+    - `HMDI_CAMERA_UI_PERSIST_ENABLE_KEY`, `HMDI_CAMERA_UI_PERSIST_PRESET_KEY`, `HMDI_CAMERA_UI_PERSIST_SETCTRLS_KEY`, `HMDI_CAMERA_UI_PERSIST_PRESET_VALUE`
+    - `HMDI_CAMERA_UI_PRESET_MANUAL_JSON`, `HMDI_CAMERA_UI_PRESET_AUTO_JSON`
+  - UI now auto-hides disabled actions (presets/persist) based on backend config.
 - `config/hmdistreamer.env.example`
   - documents source selection (`HMDI_INPUT_KIND`) and USB prep options.
   - documents `HMDI_GST_SOURCE_PIPELINE` override.
   - documents USB manual-control startup settings.
+- `systemd/hmdistreamer-camera-ui.service`
+  - description updated from USB-specific naming to generic video-control naming.
 - `config/ndi_sender.toml.example`
   - adds `gst_source_pipeline` configuration key with USB/MJPEG example.
 - `Docs/Deployment.md`
   - updated from HDMI-only assumptions to source-aware startup and USB quick-start guidance.
   - added USB microscope tested profile guidance and measured latency snapshot.
+- `Docs/USB_UVC_Handoff.md`
+  - added notes for camera UI portability knobs when reusing UI on non-USB branches.
 - `Docs/RPi5_X1300_HDMI_to_NDI_Handoff.md`
   - marked as historical and linked to current deployment/handoff docs.
 
