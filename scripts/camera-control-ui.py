@@ -23,6 +23,7 @@ CONTROL_LINE_RE = re.compile(
 )
 MENU_LINE_RE = re.compile(r"^\s*([0-9]+):\s*(.+)$")
 SAFE_CONTROL_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+SAFE_MODE_NAME_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 SAFE_ENV_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:-]+$")
 ISO_TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2}T[0-9:+-]+)")
 SENDER_METRIC_RE = re.compile(
@@ -201,6 +202,16 @@ INDEX_HTML = """<!doctype html>
       <div id="status" class="status"></div>
     </div>
 
+    <div class="card" id="modeCard" style="display:none">
+      <div class="meta">Capture mode/profile (may restart sender)</div>
+      <div class="toolbar">
+        <select id="modeSelect" style="max-width:260px"></select>
+        <button id="modeSwitchBtn" class="ok">Switch Mode</button>
+      </div>
+      <div class="meta" id="modeCurrent">current: -</div>
+      <div class="meta mono" id="modeDetails"></div>
+    </div>
+
     <div class="card">
       <div class="meta">Sender latency telemetry (sender-side, not full glass-to-glass)</div>
       <div class="toolbar">
@@ -246,6 +257,11 @@ INDEX_HTML = """<!doctype html>
       persistToggleLabel: document.getElementById("persistToggleLabel"),
       persistToggle: document.getElementById("persistToggle"),
       tokenInput: document.getElementById("tokenInput"),
+      modeCard: document.getElementById("modeCard"),
+      modeSelect: document.getElementById("modeSelect"),
+      modeSwitchBtn: document.getElementById("modeSwitchBtn"),
+      modeCurrent: document.getElementById("modeCurrent"),
+      modeDetails: document.getElementById("modeDetails"),
       refreshBtn: document.getElementById("refreshBtn"),
       applyBtn: document.getElementById("applyBtn"),
       manualBtn: document.getElementById("manualBtn"),
@@ -276,6 +292,10 @@ INDEX_HTML = """<!doctype html>
       return Boolean(state.config && state.config.features && state.config.features.presets);
     }
 
+    function supportsModeSwitch() {
+      return Boolean(state.config && state.config.features && state.config.features.mode_switch);
+    }
+
     function persistRequested() {
       return supportsPersist() && el.persistToggle.checked;
     }
@@ -283,13 +303,58 @@ INDEX_HTML = """<!doctype html>
     function updateFeatureVisibility() {
       const persistVisible = supportsPersist();
       const presetsVisible = supportsPresets();
+      const modeVisible = supportsModeSwitch();
       el.manualBtn.style.display = presetsVisible ? "" : "none";
       el.autoBtn.style.display = presetsVisible ? "" : "none";
       el.persistBtn.style.display = persistVisible ? "" : "none";
       el.persistToggleLabel.style.display = persistVisible ? "" : "none";
+      el.modeCard.style.display = modeVisible ? "" : "none";
       if (!persistVisible) {
         el.persistToggle.checked = false;
       }
+    }
+
+    async function refreshModes() {
+      const data = await api("/api/modes");
+      const enabled = Boolean(data.enabled && data.command_exists && (data.profiles || []).length);
+      if (!enabled) {
+        el.modeCard.style.display = "none";
+        return;
+      }
+
+      const profiles = data.profiles || [];
+      const selected = data.current_profile || profiles[0] || "";
+      const options = profiles.map(name => {
+        const sel = name === selected ? "selected" : "";
+        return `<option value="${name}" ${sel}>${name}</option>`;
+      }).join("");
+      el.modeSelect.innerHTML = options;
+      el.modeCurrent.textContent = `current: ${data.current_profile || "unknown"} | mode=${data.mode_text || "unknown"}`;
+      el.modeDetails.textContent = data.pipeline_excerpt ? `pipeline: ${data.pipeline_excerpt}` : "";
+      el.modeCard.style.display = "";
+    }
+
+    async function applyMode() {
+      if (!supportsModeSwitch()) {
+        setStatus("Mode switching is disabled", false);
+        return;
+      }
+      const profile = (el.modeSelect.value || "").trim();
+      if (!profile) {
+        setStatus("Select a mode profile first", false);
+        return;
+      }
+      el.modeSwitchBtn.disabled = true;
+      try {
+        const data = await api("/api/modes/apply", {
+          method: "POST",
+          body: JSON.stringify({ profile }),
+        });
+        setStatus(`Switched mode to ${data.profile}; sender=${data.sender_state}`, true);
+      } finally {
+        el.modeSwitchBtn.disabled = false;
+      }
+      await refreshAll();
     }
 
     async function api(path, opts = {}) {
@@ -504,7 +569,9 @@ INDEX_HTML = """<!doctype html>
       updateFeatureVisibility();
       const presetsSummary = (config.preset_names || []).join(",") || "off";
       const persistSummary = config.features && config.features.persist ? "on" : "off";
-      el.meta.textContent = `device=${config.device} | sender=${config.sender_service} (${config.sender_state}) | presets=${presetsSummary} | persist=${persistSummary} | token_required=${config.token_required}`;
+      const modeSummary = config.features && config.features.mode_switch ? "on" : "off";
+      el.meta.textContent = `device=${config.device} | sender=${config.sender_service} (${config.sender_state}) | presets=${presetsSummary} | persist=${persistSummary} | mode_switch=${modeSummary} | token_required=${config.token_required}`;
+      await refreshModes();
       const data = await api("/api/controls");
       state.controls = data.controls || [];
       renderControls();
@@ -578,6 +645,7 @@ INDEX_HTML = """<!doctype html>
     el.autoBtn.onclick = () => applyPreset("auto").catch(err => setStatus(err.message, false));
     el.persistBtn.onclick = () => persistCurrent().catch(err => setStatus(err.message, false));
     el.restartBtn.onclick = () => restartSender().catch(err => setStatus(err.message, false));
+    el.modeSwitchBtn.onclick = () => applyMode().catch(err => setStatus(err.message, false));
     el.saveTokenBtn.onclick = () => {
       state.token = el.tokenInput.value.trim();
       localStorage.setItem("hmdi_ui_token", state.token);
@@ -613,6 +681,11 @@ class UIServerConfig:
     persist_setctrls_key: str
     persist_preset_value: str
     presets: dict[str, dict[str, Any]]
+    mode_switch_enabled: bool
+    mode_switch_command: str
+    mode_switch_args: list[str]
+    mode_switch_profiles: list[str]
+    mode_switch_timeout_sec: float
 
 
 class CameraControlHTTPServer(ThreadingHTTPServer):
@@ -881,6 +954,119 @@ def parse_preset_json(raw: str, label: str) -> dict[str, Any]:
     return out
 
 
+def parse_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+
+    out: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if not value:
+            out[key] = ""
+            continue
+        try:
+            parts = shlex.split(value, posix=True)
+        except ValueError:
+            out[key] = value
+            continue
+        out[key] = parts[0] if len(parts) == 1 else value
+    return out
+
+
+def _command_exists(command: str) -> bool:
+    if not command.strip():
+        return False
+    if "/" in command:
+        return os.path.isfile(command) and os.access(command, os.X_OK)
+    return shutil.which(command) is not None
+
+
+def parse_mode_profiles(raw: str) -> list[str]:
+    out: list[str] = []
+    for part in raw.split(","):
+        profile = part.strip()
+        if not profile:
+            continue
+        if not SAFE_MODE_NAME_RE.match(profile):
+            raise CameraControlError(f"invalid mode profile name: {profile!r}")
+        out.append(profile)
+    return out
+
+
+def infer_active_profile(cfg: UIServerConfig, env_map: dict[str, str]) -> str | None:
+    profile = env_map.get("HMDI_USB_PROFILE", "").strip().lower()
+    if profile and profile in cfg.mode_switch_profiles:
+        return profile
+
+    width = env_map.get("HMDI_WIDTH", "").strip()
+    height = env_map.get("HMDI_HEIGHT", "").strip()
+    fps_num = env_map.get("HMDI_FPS_NUM", "").strip()
+    fps_den = env_map.get("HMDI_FPS_DEN", "").strip()
+    pipeline = env_map.get("HMDI_GST_SOURCE_PIPELINE", "")
+    lower_pipeline = pipeline.lower()
+
+    if (
+        width == "1280"
+        and height == "720"
+        and fps_num == "30"
+        and fps_den == "1"
+        and "width=1280" in lower_pipeline
+        and "height=720" in lower_pipeline
+        and "image/jpeg" in lower_pipeline
+        and "microscope-latency" in cfg.mode_switch_profiles
+    ):
+        return "microscope-latency"
+
+    if (
+        width == "1600"
+        and height == "1200"
+        and fps_num == "30"
+        and fps_den == "1"
+        and "width=1600" in lower_pipeline
+        and "height=1200" in lower_pipeline
+        and "image/jpeg" in lower_pipeline
+        and "microscope-detail" in cfg.mode_switch_profiles
+    ):
+        return "microscope-detail"
+
+    return None
+
+
+def mode_status(cfg: UIServerConfig) -> dict[str, Any]:
+    env_map = parse_env_file(cfg.env_file)
+    width = env_map.get("HMDI_WIDTH", "").strip()
+    height = env_map.get("HMDI_HEIGHT", "").strip()
+    fps_num = env_map.get("HMDI_FPS_NUM", "").strip()
+    fps_den = env_map.get("HMDI_FPS_DEN", "").strip()
+
+    mode_parts: list[str] = []
+    if width and height:
+        mode_parts.append(f"{width}x{height}")
+    if fps_num and fps_den:
+        mode_parts.append(f"@{fps_num}/{fps_den}fps")
+    mode_text = " ".join(mode_parts) if mode_parts else "unknown"
+
+    pipeline = env_map.get("HMDI_GST_SOURCE_PIPELINE", "")
+    pipeline_excerpt = pipeline if len(pipeline) <= 180 else pipeline[:177] + "..."
+
+    return {
+        "enabled": cfg.mode_switch_enabled,
+        "command": cfg.mode_switch_command,
+        "command_exists": _command_exists(cfg.mode_switch_command),
+        "profiles": list(cfg.mode_switch_profiles),
+        "current_profile": infer_active_profile(cfg, env_map),
+        "mode_text": mode_text,
+        "pipeline_excerpt": pipeline_excerpt,
+    }
+
+
 def sender_state(service_name: str, timeout_sec: float) -> str:
     try:
         result = subprocess.run(
@@ -1032,6 +1218,7 @@ class CameraControlHandler(BaseHTTPRequestHandler):
                     self.server.cfg.persist_enabled
                     and bool(self.server.cfg.persist_setctrls_key.strip())
                 )
+                mode_info = mode_status(self.server.cfg)
                 self.send_json(
                     HTTPStatus.OK,
                     {
@@ -1046,10 +1233,16 @@ class CameraControlHandler(BaseHTTPRequestHandler):
                         "features": {
                             "presets": bool(preset_names),
                             "persist": persist_enabled,
+                            "mode_switch": bool(
+                                mode_info["enabled"] and mode_info["command_exists"]
+                            ),
                         },
                         "preset_names": preset_names,
                     },
                 )
+                return
+            if path == "/api/modes":
+                self.send_json(HTTPStatus.OK, mode_status(self.server.cfg))
                 return
             if path == "/api/controls":
                 controls = get_controls(
@@ -1188,6 +1381,40 @@ class CameraControlHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if path == "/api/modes/apply":
+                profile = str(body.get("profile", "")).strip().lower()
+                if not self.server.cfg.mode_switch_enabled:
+                    raise CameraControlError("mode switching is disabled")
+                if not profile:
+                    raise CameraControlError("profile is required")
+                if profile not in self.server.cfg.mode_switch_profiles:
+                    supported = ", ".join(self.server.cfg.mode_switch_profiles)
+                    raise CameraControlError(
+                        f"unknown profile '{profile}' (supported: {supported})"
+                    )
+                if not _command_exists(self.server.cfg.mode_switch_command):
+                    raise CameraControlError(
+                        f"mode switch command not found: {self.server.cfg.mode_switch_command}"
+                    )
+
+                command = [self.server.cfg.mode_switch_command, profile]
+                command.extend(self.server.cfg.mode_switch_args)
+                output = run_command(command, self.server.cfg.mode_switch_timeout_sec)
+
+                self.send_json(
+                    HTTPStatus.OK,
+                    {
+                        "profile": profile,
+                        "sender_state": sender_state(
+                            self.server.cfg.sender_service,
+                            self.server.cfg.command_timeout_sec,
+                        ),
+                        "mode": mode_status(self.server.cfg),
+                        "output_excerpt": output[-2000:] if len(output) > 2000 else output,
+                    },
+                )
+                return
+
             self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
         except CameraControlError as exc:
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
@@ -1254,6 +1481,39 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Disable startup-persistence actions",
     )
     parser.add_argument(
+        "--disable-mode-switch",
+        action="store_true",
+        default=not env_flag("HMDI_CAMERA_UI_ENABLE_MODE_SWITCH", True),
+        help="Disable capture mode switch actions",
+    )
+    parser.add_argument(
+        "--mode-switch-command",
+        default=os.getenv(
+            "HMDI_CAMERA_UI_MODE_COMMAND",
+            "/usr/local/bin/hmdistreamer-set-usb-profile",
+        ),
+        help="Command used to switch capture profiles",
+    )
+    parser.add_argument(
+        "--mode-switch-profiles",
+        default=os.getenv(
+            "HMDI_CAMERA_UI_MODE_PROFILES",
+            "microscope-latency,microscope-detail",
+        ),
+        help="Comma-separated allowed profile names",
+    )
+    parser.add_argument(
+        "--mode-switch-args",
+        default=os.getenv("HMDI_CAMERA_UI_MODE_ARGS", ""),
+        help="Extra args appended after selected profile",
+    )
+    parser.add_argument(
+        "--mode-switch-timeout-sec",
+        type=float,
+        default=float(os.getenv("HMDI_CAMERA_UI_MODE_TIMEOUT_SEC", "20.0")),
+        help="Timeout for mode switch command",
+    )
+    parser.add_argument(
         "--persist-enable-key",
         default=os.getenv("HMDI_CAMERA_UI_PERSIST_ENABLE_KEY", "HMDI_USB_APPLY_CONTROLS"),
         help="Env key to mark startup control application enabled",
@@ -1309,6 +1569,11 @@ def main(argv: list[str]) -> int:
     if args.command_timeout_sec <= 0:
         logging.error("Invalid --command-timeout-sec: %s", args.command_timeout_sec)
         return 2
+    if args.mode_switch_timeout_sec <= 0:
+        logging.error(
+            "Invalid --mode-switch-timeout-sec: %s", args.mode_switch_timeout_sec
+        )
+        return 2
     if args.max_request_bytes <= 0:
         logging.error("Invalid --max-request-bytes: %s", args.max_request_bytes)
         return 2
@@ -1325,6 +1590,23 @@ def main(argv: list[str]) -> int:
         presets["manual"] = manual_values
         presets["auto"] = auto_values
 
+    try:
+        mode_profiles = parse_mode_profiles(str(args.mode_switch_profiles))
+    except CameraControlError as exc:
+        logging.error("%s", exc)
+        return 2
+    if not args.disable_mode_switch and not mode_profiles:
+        logging.error(
+            "Mode switching is enabled but no profiles were configured. "
+            "Set HMDI_CAMERA_UI_MODE_PROFILES or use --disable-mode-switch."
+        )
+        return 2
+    try:
+        mode_args = shlex.split(str(args.mode_switch_args), posix=True)
+    except ValueError as exc:
+        logging.error("Invalid --mode-switch-args value: %s", exc)
+        return 2
+
     cfg = UIServerConfig(
         device=args.device,
         env_file=Path(args.env_file),
@@ -1338,17 +1620,28 @@ def main(argv: list[str]) -> int:
         persist_setctrls_key=str(args.persist_setctrls_key).strip(),
         persist_preset_value=str(args.persist_preset_value).strip(),
         presets=presets,
+        mode_switch_enabled=not bool(args.disable_mode_switch),
+        mode_switch_command=str(args.mode_switch_command).strip(),
+        mode_switch_args=mode_args,
+        mode_switch_profiles=mode_profiles,
+        mode_switch_timeout_sec=float(args.mode_switch_timeout_sec),
     )
+    if cfg.mode_switch_enabled and not _command_exists(cfg.mode_switch_command):
+        logging.warning(
+            "Mode switch command is not available: %s", cfg.mode_switch_command
+        )
 
     server = CameraControlHTTPServer((args.host, args.port), cfg)
     logging.info(
-        "Camera control UI listening on http://%s:%d (device=%s token_required=%s presets=%s persist=%s)",
+        "Camera control UI listening on http://%s:%d "
+        "(device=%s token_required=%s presets=%s persist=%s mode_switch=%s)",
         args.host,
         args.port,
         args.device,
         bool(args.auth_token.strip()),
         ",".join(sorted(cfg.presets.keys())) if cfg.presets else "off",
         cfg.persist_enabled and bool(cfg.persist_setctrls_key),
+        cfg.mode_switch_enabled and bool(cfg.mode_switch_profiles),
     )
     try:
         server.serve_forever()

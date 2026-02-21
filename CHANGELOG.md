@@ -55,6 +55,10 @@
     - `HMDI_CAMERA_UI_PERSIST_ENABLE_KEY`, `HMDI_CAMERA_UI_PERSIST_PRESET_KEY`, `HMDI_CAMERA_UI_PERSIST_SETCTRLS_KEY`, `HMDI_CAMERA_UI_PERSIST_PRESET_VALUE`
     - `HMDI_CAMERA_UI_PRESET_MANUAL_JSON`, `HMDI_CAMERA_UI_PRESET_AUTO_JSON`
   - UI now auto-hides disabled actions (presets/persist) based on backend config.
+  - added capture mode panel + APIs (`/api/modes`, `/api/modes/apply`) to switch configured USB profiles directly from the browser.
+  - mode switch is env-configurable (`HMDI_CAMERA_UI_ENABLE_MODE_SWITCH`, `HMDI_CAMERA_UI_MODE_COMMAND`, `HMDI_CAMERA_UI_MODE_PROFILES`, `HMDI_CAMERA_UI_MODE_ARGS`, `HMDI_CAMERA_UI_MODE_TIMEOUT_SEC`).
+- `scripts/set-usb-profile.sh`
+  - now persists `HMDI_USB_PROFILE=<profile>` to make current mode/profile detection explicit in tooling/UI.
 - `config/hmdistreamer.env.example`
   - documents source selection (`HMDI_INPUT_KIND`) and USB prep options.
   - documents `HMDI_GST_SOURCE_PIPELINE` override.

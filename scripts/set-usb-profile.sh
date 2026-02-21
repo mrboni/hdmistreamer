@@ -197,6 +197,7 @@ set_env_key HMDI_NDI_SAFE_COPY 0
 set_env_key HMDI_NDI_ASYNC_SAFE_COPY 0
 set_env_key HMDI_NDI_CLOCK_VIDEO 0
 set_env_key HMDI_DROP_STALE_MS "$drop_stale_ms"
+set_env_key HMDI_USB_PROFILE "$PROFILE"
 set_env_key HMDI_USB_APPLY_CONTROLS 1
 set_env_key HMDI_USB_CONTROL_PRESET manual
 set_env_key HMDI_USB_SET_CTRLS "$controls"

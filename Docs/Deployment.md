@@ -169,6 +169,7 @@ Capabilities:
 - toggle auto-apply off if you prefer batching and explicit Apply
 - apply presets (manual/auto by default; configurable/disable-able via env)
 - persist startup defaults to `/etc/hmdistreamer/hmdistreamer.env` (key is configurable; default `HMDI_USB_SET_CTRLS`)
+- switch capture mode/profile (USB profile helper integration, optional)
 - restart sender service from UI
 - show sender latency panel (`fps`, `connections`, `capture->send age`, `ndi_send`, `stale_drop`)
 
@@ -183,6 +184,11 @@ Portability / hardening knobs:
   - `HMDI_CAMERA_UI_PERSIST_PRESET_VALUE`
 - `HMDI_CAMERA_UI_PRESET_MANUAL_JSON` / `HMDI_CAMERA_UI_PRESET_AUTO_JSON` to override preset payloads.
 - command hardening: `HMDI_CAMERA_UI_CMD_TIMEOUT_SEC`, `HMDI_CAMERA_UI_MAX_REQUEST_BYTES`.
+- mode switch integration:
+  - `HMDI_CAMERA_UI_ENABLE_MODE_SWITCH=1`
+  - `HMDI_CAMERA_UI_MODE_COMMAND=/usr/local/bin/hmdistreamer-set-usb-profile`
+  - `HMDI_CAMERA_UI_MODE_PROFILES=microscope-latency,microscope-detail`
+  - optional args/timeout: `HMDI_CAMERA_UI_MODE_ARGS`, `HMDI_CAMERA_UI_MODE_TIMEOUT_SEC`
 
 Optional security:
 
