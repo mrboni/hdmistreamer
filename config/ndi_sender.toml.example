@@ -24,6 +24,9 @@ gst_io_mode = "mmap"
 gst_convert_threads = 4
 gst_input_format = "UYVY"
 gst_output_format = "UYVY"
+# Optional full source stage override for custom capture graphs (e.g. USB MJPEG decode):
+# gst_source_pipeline = "v4l2src device=/dev/video2 io-mode=mmap do-timestamp=true ! image/jpeg,width=1920,height=1080,framerate=60/1 ! jpegdec ! videoconvert ! video/x-raw,format=UYVY,width=1920,height=1080,framerate=60/1"
+gst_source_pipeline = ""
 gst_use_leaky_queue = false
 gst_queue_max_buffers = 1
 drop_stale_ms = 0.0

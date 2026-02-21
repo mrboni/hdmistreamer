@@ -1,8 +1,9 @@
-# HDMI -> NDI Deployment (RPi5 + X1300)
+# Video -> NDI Deployment (RPi5 + X1300 Baseline)
 
 This project now includes:
 
 - `configure-hdmi.sh`: robust HDMI/EDID/media-graph bring-up with retry logic
+- `scripts/prepare-video-source.sh`: source-aware startup wrapper (`hdmi-csi` or `usb-uvc`)
 - `scripts/ndi_sender.py`: Python NDI sender (`gstreamer` default, `ffmpeg` optional)
 - `systemd/hmdistreamer-hdmi-bringup.service`: optional standalone bring-up service
 - `systemd/hmdistreamer-ndi-sender.service`: persistent NDI sender service
@@ -34,10 +35,16 @@ Performance note:
 
 - Default backend is `gstreamer` for correctness/stability on this capture stack.
 - `capture_backend = "ffmpeg"` is experimental here; without careful timing options it can repeat stale frames.
-- Current default is native `UYVY -> NDI UYVY` end-to-end to avoid `videoconvert` overhead.
+- Current stable X1300 camera path is native `UYVY -> NDI UYVY` end-to-end to avoid `videoconvert` overhead.
 - Sender logs now include `capture->send age ms` (local queueing delay estimate) every 5 seconds.
 
-## 3. Resolution Profiles
+## 3. Source and Mode Profiles
+
+Input source selection (`HMDI_INPUT_KIND` in `/etc/hmdistreamer/hmdistreamer.env`):
+
+- `hdmi-csi` (default): runs full HDMI EDID/timing/media-graph bring-up.
+- `usb-uvc`: skips HDMI bring-up and prepares only USB video capture device.
+- `none`: skips source prep completely (advanced/manual use).
 
 Supported mode profiles (`HMDI_MODE` in `/etc/hmdistreamer/hmdistreamer.env`):
 
@@ -56,6 +63,14 @@ Recommended default for mixed 1080p sources is:
 - `HMDI_MEDIA_BUS_FMT=UYVY8_1X16`, `HMDI_VIDEO_PIXFMT=UYVY`
 - `HMDI_NDI_FOURCC=UYVY`, `HMDI_GST_INPUT_FORMAT=UYVY`, `HMDI_GST_OUTPUT_FORMAT=UYVY`
 - Avoid per-rate EDID swapping unless you explicitly need to force source behavior.
+
+USB quick-start baseline (for development/handoff):
+
+- `HMDI_INPUT_KIND=usb-uvc`
+- `HMDI_VIDEO_DEVICE=/dev/videoX` (your webcam node)
+- Set sender dimensions/fps explicitly (`HMDI_WIDTH`, `HMDI_HEIGHT`, `HMDI_FPS_NUM`, `HMDI_FPS_DEN`) if no runtime env is written.
+- Keep `HMDI_NDI_FOURCC=UYVY`, `HMDI_GST_INPUT_FORMAT=UYVY`, `HMDI_GST_OUTPUT_FORMAT=UYVY` when device supports native UYVY.
+- If webcam requires decode/transforms (for example MJPEG), use `HMDI_GST_SOURCE_PIPELINE` override.
 
 Switch mode quickly:
 
@@ -86,8 +101,9 @@ The sender service reads that file on each start, so width/height follow selecte
 ```bash
 sudo systemctl start hmdistreamer-ndi-sender.service
 sudo systemctl status hmdistreamer-ndi-sender.service --no-pager
-sudo journalctl -u hmdistreamer-hdmi-bringup.service -f
 sudo journalctl -u hmdistreamer-ndi-sender.service -f
+# HDMI mode only:
+sudo journalctl -u hmdistreamer-hdmi-bringup.service -f
 ```
 
 Low-latency knobs (`/etc/hmdistreamer/hmdistreamer.env`):
@@ -104,7 +120,9 @@ These can reduce buffering but may increase jitter/dropped frames if the system 
 Boot behavior:
 
 - `hmdistreamer-ndi-sender.service` starts at boot (no login required).
-- Sender startup always runs `/usr/local/bin/hmdistreamer-hdmi-bringup` as `ExecStartPre`, so it can recover from lock loss and replug events automatically.
+- Sender startup always runs `/usr/local/bin/hmdistreamer-source-prepare` as `ExecStartPre`.
+- For `HMDI_INPUT_KIND=hdmi-csi`, source-prepare delegates to `/usr/local/bin/hmdistreamer-hdmi-bringup`.
+- For `HMDI_INPUT_KIND=usb-uvc`, source-prepare validates/prepares the USB device and skips HDMI/EDID steps.
 
 ## 4.1 Current State (2026-02-20)
 
@@ -121,9 +139,10 @@ Reboot-cycle validation (2026-02-20):
 
 - Host reboot completed; service came back automatically with no manual steps.
 - `hmdistreamer-ndi-sender.service` is `enabled` and `active` after boot.
-- Boot instance started at `2026-02-20 14:42:40 GMT` with successful `ExecStartPre` (`hmdistreamer-hdmi-bringup`).
+- Boot instance started at `2026-02-20 14:42:40 GMT` with successful `ExecStartPre` (`hmdistreamer-source-prepare` -> HDMI bring-up path).
 - `/dev/video0` post-boot format is `UYVY` at `1920x1080`.
 - Sender logs post-boot show stable `50.0 fps`, `stale_drop=0`, and `capture->send age` around `~20.2 ms`.
+- Baseline tag for this validated camera state: `stable-camera`.
 
 Performance profiling snapshot (RPi 5, 4 CPU cores, source locked at 1080p60):
 
@@ -193,4 +212,13 @@ If discovery fails:
 
 - Ensure both devices are on same L2 segment/subnet.
 - Check sender logs for `No video frames received` or GStreamer errors.
-- Confirm `configure-hdmi.sh` reports a valid lock for the active source mode.
+- For `HMDI_INPUT_KIND=hdmi-csi`, confirm `configure-hdmi.sh` reports a valid lock.
+- For `HMDI_INPUT_KIND=usb-uvc`, confirm the selected `/dev/videoX` is present and streaming.
+
+## 7. USB Handoff
+
+For the next agent developing a USB webcam ingest variant, use:
+
+- `Docs/USB_UVC_Handoff.md`
+
+That handoff consolidates current architecture, refactor points, performance guardrails, and acceptance criteria.

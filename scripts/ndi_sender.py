@@ -59,6 +59,7 @@ class SenderConfig:
     gst_convert_threads: int = 4
     gst_input_format: str = "UYVY"
     gst_output_format: str = "UYVY"
+    gst_source_pipeline: str = ""
     gst_use_leaky_queue: bool = False
     gst_queue_max_buffers: int = 1
     drop_stale_ms: float = 0.0
@@ -156,6 +157,7 @@ def build_config(config_path: Path) -> SenderConfig:
         "HMDI_GST_CONVERT_THREADS": "gst_convert_threads",
         "HMDI_GST_INPUT_FORMAT": "gst_input_format",
         "HMDI_GST_OUTPUT_FORMAT": "gst_output_format",
+        "HMDI_GST_SOURCE_PIPELINE": "gst_source_pipeline",
         "HMDI_GST_USE_LEAKY_QUEUE": "gst_use_leaky_queue",
         "HMDI_GST_QUEUE_MAX_BUFFERS": "gst_queue_max_buffers",
         "HMDI_DROP_STALE_MS": "drop_stale_ms",
@@ -218,6 +220,9 @@ def normalize_fourcc_name(value: str) -> str:
 def build_pipeline(cfg: SenderConfig) -> str:
     input_format = canonical_gst_format(cfg.gst_input_format)
     output_format = canonical_gst_format(cfg.gst_output_format)
+    source_pipeline = cfg.gst_source_pipeline.strip()
+    if source_pipeline.endswith("!"):
+        source_pipeline = source_pipeline[:-1].rstrip()
 
     input_caps = (
         f"video/x-raw,format={input_format},width={cfg.width},height={cfg.height},"
@@ -235,15 +240,20 @@ def build_pipeline(cfg: SenderConfig) -> str:
             f"max-size-buffers={cfg.gst_queue_max_buffers} max-size-time=0 max-size-bytes=0 ! "
         )
 
-    if input_format == output_format:
-        return (
+    source_stage = (
+        source_pipeline
+        if source_pipeline
+        else (
             f"v4l2src device={cfg.video_device} io-mode={cfg.gst_io_mode} do-timestamp=true ! "
-            f"{input_caps} ! {queue_stage}{appsink}"
+            f"{input_caps}"
         )
+    )
+
+    if input_format == output_format:
+        return f"{source_stage} ! {queue_stage}{appsink}"
 
     return (
-        f"v4l2src device={cfg.video_device} io-mode={cfg.gst_io_mode} do-timestamp=true ! "
-        f"{input_caps} ! "
+        f"{source_stage} ! "
         f"{queue_stage}"
         f"videoconvert n-threads={cfg.gst_convert_threads} ! "
         f"{output_caps} ! "
@@ -338,6 +348,8 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                 self.ndi_fourcc_name,
                 expected_format,
             )
+        if self.cfg.gst_source_pipeline.strip():
+            logging.info("Using custom gst_source_pipeline override")
         self.start_ndi()
         pipeline_text = build_pipeline(self.cfg)
         logging.info("Starting capture pipeline: %s", pipeline_text)

@@ -42,6 +42,7 @@ fi
 
 echo "Installing executable scripts..."
 install -m 0755 "${REPO_ROOT}/configure-hdmi.sh" /usr/local/bin/hmdistreamer-hdmi-bringup
+install -m 0755 "${REPO_ROOT}/scripts/prepare-video-source.sh" /usr/local/bin/hmdistreamer-source-prepare
 install -m 0755 "${REPO_ROOT}/scripts/ndi_sender.py" /usr/local/bin/hmdistreamer-ndi-sender
 install -m 0755 "${REPO_ROOT}/scripts/hmdistreamer-diagnostics.sh" /usr/local/bin/hmdistreamer-diagnostics
 install -m 0755 "${REPO_ROOT}/scripts/set-mode.sh" /usr/local/bin/hmdistreamer-set-mode

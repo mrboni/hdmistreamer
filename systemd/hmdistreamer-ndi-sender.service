@@ -1,5 +1,5 @@
 [Unit]
-Description=HDMI to NDI sender
+Description=Video to NDI sender
 Wants=network.target avahi-daemon.service
 After=network.target avahi-daemon.service
 StartLimitIntervalSec=0
@@ -8,7 +8,7 @@ StartLimitIntervalSec=0
 Type=simple
 EnvironmentFile=-/etc/hmdistreamer/hmdistreamer.env
 EnvironmentFile=-/run/hmdistreamer/video.env
-ExecStartPre=/usr/local/bin/hmdistreamer-hdmi-bringup
+ExecStartPre=/usr/local/bin/hmdistreamer-source-prepare
 ExecStart=/usr/bin/env python3 /usr/local/bin/hmdistreamer-ndi-sender --config /etc/hmdistreamer/ndi_sender.toml
 Restart=always
 RestartSec=2

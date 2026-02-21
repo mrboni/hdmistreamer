@@ -2,6 +2,10 @@
 
 ## Engineering Handoff Document for Code CLI
 
+> Historical bring-up notes from early project phases.
+> For current operational guidance use `Docs/Deployment.md`.
+> For USB webcam extension work use `Docs/USB_UVC_Handoff.md`.
+
 **Date:** 2026-02-18 **Platform:** Raspberry Pi 5\
 **OS:** Raspberry Pi OS (64-bit) -- Trixie\
 **Hardware:** Geekworm X1300 (TC358743 HDMI → CSI bridge)\

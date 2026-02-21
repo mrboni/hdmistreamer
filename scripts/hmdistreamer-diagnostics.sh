@@ -12,6 +12,7 @@ ENV_FILE="${ENV_FILE:-/etc/hmdistreamer/hmdistreamer.env}"
 RUNTIME_ENV_FILE="${RUNTIME_ENV_FILE:-/run/hmdistreamer/video.env}"
 SENDER_SERVICE="${SENDER_SERVICE:-hmdistreamer-ndi-sender.service}"
 BRINGUP_SERVICE="${BRINGUP_SERVICE:-hmdistreamer-hdmi-bringup.service}"
+INPUT_KIND="${HMDI_INPUT_KIND:-hdmi-csi}"
 
 usage() {
   cat <<'EOF'
@@ -65,6 +66,10 @@ section "Config Files"
 if [ -f "$ENV_FILE" ]; then
   echo "$ENV_FILE:"
   sed -n '1,220p' "$ENV_FILE"
+  env_input_kind="$(awk -F= '/^HMDI_INPUT_KIND=/{print tolower($2); exit}' "$ENV_FILE" | tr -d '[:space:]')"
+  if [ -n "${env_input_kind:-}" ]; then
+    INPUT_KIND="$env_input_kind"
+  fi
 else
   echo "Missing: $ENV_FILE"
 fi
@@ -99,10 +104,14 @@ echo "$BRINGUP_SERVICE: $(systemctl is-active "$BRINGUP_SERVICE" 2>/dev/null || 
 safe_run systemctl --no-pager --full status "$SENDER_SERVICE" | sed -n '1,80p'
 safe_run systemctl --no-pager --full status "$BRINGUP_SERVICE" | sed -n '1,80p'
 
-section "HDMI Timings"
-safe_run v4l2-ctl -d "$V4L_SUBDEV" --query-dv-timings
-echo
-safe_run v4l2-ctl -d "$V4L_SUBDEV" --set-dv-bt-timings query
+section "Source Timings"
+if [ "$INPUT_KIND" = "hdmi-csi" ] || [ "$INPUT_KIND" = "hdmi" ]; then
+  safe_run v4l2-ctl -d "$V4L_SUBDEV" --query-dv-timings
+  echo
+  safe_run v4l2-ctl -d "$V4L_SUBDEV" --set-dv-bt-timings query
+else
+  echo "Skipping HDMI timing query for input kind: ${INPUT_KIND}"
+fi
 
 section "Video Format"
 safe_run v4l2-ctl -d "$VIDEO_DEV" --get-fmt-video
@@ -113,7 +122,7 @@ section "Media Graph (summary)"
 safe_run media-ctl -d "$MEDIA_DEV" -p | sed -n '1,220p'
 
 section "Process List"
-safe_run ps -ef | grep -E 'hmdistreamer-ndi-sender|hmdistreamer-hdmi-bringup|ffmpeg|gst-launch|v4l2src' | grep -v grep
+safe_run ps -ef | grep -E 'hmdistreamer-ndi-sender|hmdistreamer-source-prepare|hmdistreamer-hdmi-bringup|ffmpeg|gst-launch|v4l2src' | grep -v grep
 
 section "Recent Logs: $SENDER_SERVICE"
 safe_run journalctl -u "$SENDER_SERVICE" -n "$LOG_LINES" --no-pager
@@ -123,9 +132,6 @@ safe_run journalctl -u "$BRINGUP_SERVICE" -n "$LOG_LINES" --no-pager
 
 section "Health Summary"
 sender_active="$(systemctl is-active "$SENDER_SERVICE" 2>/dev/null || true)"
-timings="$(v4l2-ctl -d "$V4L_SUBDEV" --query-dv-timings 2>/dev/null || true)"
-active_width="$(printf '%s\n' "$timings" | awk -F: '/Active width/ {gsub(/ /, "", $2); print $2; exit}')"
-active_height="$(printf '%s\n' "$timings" | awk -F: '/Active height/ {gsub(/ /, "", $2); print $2; exit}')"
 sender_has_fps_log=0
 if journalctl -u "$SENDER_SERVICE" -n "$LOG_LINES" --no-pager 2>/dev/null | grep -q "Sending "; then
   sender_has_fps_log=1
@@ -137,10 +143,17 @@ else
   echo "[WARN] Sender service is not active (state: $sender_active)"
 fi
 
-if [ -n "${active_width:-}" ] && [ -n "${active_height:-}" ] && [ "$active_width" != "0" ] && [ "$active_height" != "0" ]; then
-  echo "[OK] HDMI lock reports ${active_width}x${active_height}"
+if [ "$INPUT_KIND" = "hdmi-csi" ] || [ "$INPUT_KIND" = "hdmi" ]; then
+  timings="$(v4l2-ctl -d "$V4L_SUBDEV" --query-dv-timings 2>/dev/null || true)"
+  active_width="$(printf '%s\n' "$timings" | awk -F: '/Active width/ {gsub(/ /, "", $2); print $2; exit}')"
+  active_height="$(printf '%s\n' "$timings" | awk -F: '/Active height/ {gsub(/ /, "", $2); print $2; exit}')"
+  if [ -n "${active_width:-}" ] && [ -n "${active_height:-}" ] && [ "$active_width" != "0" ] && [ "$active_height" != "0" ]; then
+    echo "[OK] HDMI lock reports ${active_width}x${active_height}"
+  else
+    echo "[WARN] HDMI timings did not report a valid active resolution"
+  fi
 else
-  echo "[WARN] HDMI timings did not report a valid active resolution"
+  echo "[OK] HDMI timing lock check skipped for input kind: ${INPUT_KIND}"
 fi
 
 if [ "$sender_has_fps_log" = "1" ]; then
@@ -159,4 +172,3 @@ if [ "$RUN_STREAM_TEST" = "1" ]; then
     safe_run v4l2-ctl -d "$VIDEO_DEV" --stream-mmap=4 --stream-count=60 --stream-to=/dev/null
   fi
 fi
-

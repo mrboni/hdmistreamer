@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-02-21
+
+### Added
+
+- Stable baseline tag for validated camera path:
+  - `stable-camera` (annotated tag pointing to commit `c40a0d8`)
+- `scripts/prepare-video-source.sh` and installed command `hmdistreamer-source-prepare`:
+  - unified `ExecStartPre` source prep entrypoint
+  - `HMDI_INPUT_KIND` support (`hdmi-csi`, `usb-uvc`, `none`)
+  - optional USB device prep controls (`HMDI_USB_SET_FORMAT`, `HMDI_USB_VALIDATE_STREAM`, etc.)
+- USB development handoff document:
+  - `Docs/USB_UVC_Handoff.md`
+
+### Changed
+
+- `systemd/hmdistreamer-ndi-sender.service`
+  - `ExecStartPre` now uses `/usr/local/bin/hmdistreamer-source-prepare` instead of hardwiring HDMI bring-up.
+- `scripts/install-systemd.sh`
+  - now installs `scripts/prepare-video-source.sh` to `/usr/local/bin/hmdistreamer-source-prepare`.
+- `scripts/ndi_sender.py`
+  - adds `gst_source_pipeline` override support to allow custom source graphs (for example USB MJPEG decode) while keeping sender loop/telemetry unchanged.
+  - adds env override key `HMDI_GST_SOURCE_PIPELINE`.
+- `scripts/profile-performance.sh`
+  - now runs `/usr/local/bin/hmdistreamer-source-prepare` instead of `/usr/local/bin/hmdistreamer-hdmi-bringup`.
+- `scripts/hmdistreamer-diagnostics.sh`
+  - source-aware behavior for `HMDI_INPUT_KIND`, including conditional HDMI timing checks.
+  - process inspection now includes `hmdistreamer-source-prepare`.
+- `config/hmdistreamer.env.example`
+  - documents source selection (`HMDI_INPUT_KIND`) and USB prep options.
+  - documents `HMDI_GST_SOURCE_PIPELINE` override.
+- `config/ndi_sender.toml.example`
+  - adds `gst_source_pipeline` configuration key with USB/MJPEG example.
+- `Docs/Deployment.md`
+  - updated from HDMI-only assumptions to source-aware startup and USB quick-start guidance.
+- `Docs/RPi5_X1300_HDMI_to_NDI_Handoff.md`
+  - marked as historical and linked to current deployment/handoff docs.
+
 ## 2026-02-20
 
 ### Added

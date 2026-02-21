@@ -106,8 +106,8 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-echo "Running HDMI bring-up..."
-/usr/local/bin/hmdistreamer-hdmi-bringup >"$TMP_DIR/bringup.log" 2>&1 || {
+echo "Running video source preparation..."
+/usr/local/bin/hmdistreamer-source-prepare >"$TMP_DIR/bringup.log" 2>&1 || {
   cat "$TMP_DIR/bringup.log"
   exit 1
 }
