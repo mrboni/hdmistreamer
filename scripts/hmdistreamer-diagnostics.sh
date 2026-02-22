@@ -118,11 +118,34 @@ safe_run v4l2-ctl -d "$VIDEO_DEV" --get-fmt-video
 echo
 safe_run v4l2-ctl -d "$VIDEO_DEV" --all | sed -n '1,140p'
 
+if [ "$INPUT_KIND" = "usb-uvc" ] || [ "$INPUT_KIND" = "usb" ] || [ "$INPUT_KIND" = "uvc" ]; then
+  section "USB Controls"
+  safe_run v4l2-ctl -d "$VIDEO_DEV" --list-ctrls-menus
+  echo
+  safe_run v4l2-ctl -d "$VIDEO_DEV" --get-ctrl=auto_exposure,exposure_time_absolute,exposure_dynamic_framerate,white_balance_automatic,white_balance_temperature,gain,power_line_frequency
+fi
+
 section "Media Graph (summary)"
 safe_run media-ctl -d "$MEDIA_DEV" -p | sed -n '1,220p'
 
 section "Process List"
 safe_run ps -ef | grep -E 'hmdistreamer-ndi-sender|hmdistreamer-source-prepare|hmdistreamer-hdmi-bringup|ffmpeg|gst-launch|v4l2src' | grep -v grep
+
+section "NDI Socket Peers"
+sender_pid="$(systemctl show "$SENDER_SERVICE" -p MainPID --value 2>/dev/null || true)"
+if [ -n "${sender_pid:-}" ] && [ "$sender_pid" != "0" ]; then
+  if command -v ss >/dev/null 2>&1; then
+    echo "TCP sockets for sender pid=${sender_pid}:"
+    safe_run ss -tapn | awk -v pid="$sender_pid" 'index($0, "pid=" pid ",") > 0'
+    echo
+    echo "UDP sockets for sender pid=${sender_pid}:"
+    safe_run ss -uapn | awk -v pid="$sender_pid" 'index($0, "pid=" pid ",") > 0'
+  else
+    echo "ss command not available"
+  fi
+else
+  echo "Sender service is not running; no socket peers to report."
+fi
 
 section "Recent Logs: $SENDER_SERVICE"
 safe_run journalctl -u "$SENDER_SERVICE" -n "$LOG_LINES" --no-pager

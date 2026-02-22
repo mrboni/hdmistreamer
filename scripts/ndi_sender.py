@@ -487,15 +487,22 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
             if now - fps_window_start >= 5.0:
                 fps = fps_window_count / (now - fps_window_start)
                 min_age_ms, avg_age_ms, max_age_ms = age_window.summary()
+                connections = -1
+                if self.sender is not None:
+                    try:
+                        connections = self.sender.get_num_connections(0.0)
+                    except Exception:
+                        connections = -1
                 if self.cfg.drop_stale_ms > 0.0:
                     stale_drop_ratio = 0.0
                     if pulled_window_count > 0:
                         stale_drop_ratio = (stale_drop_window_count / pulled_window_count) * 100.0
                     logging.info(
-                        "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
+                        "Sending %.1f fps (connections=%d) | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
                         "step ms appsink_wait avg=%.2f map_copy avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f | "
                         "stale_drop=%d/%d (%.1f%%) threshold=%.1fms",
                         fps,
+                        connections,
                         min_age_ms,
                         avg_age_ms,
                         max_age_ms,
@@ -510,9 +517,10 @@ class GStreamerHDMIToNDISender(BaseHDMIToNDISender):
                     )
                 else:
                     logging.info(
-                        "Sending %.1f fps | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
+                        "Sending %.1f fps (connections=%d) | capture->send age ms min=%.2f avg=%.2f max=%.2f | "
                         "step ms appsink_wait avg=%.2f map_copy avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f",
                         fps,
+                        connections,
                         min_age_ms,
                         avg_age_ms,
                         max_age_ms,
@@ -672,9 +680,16 @@ class FFmpegHDMIToNDISender(BaseHDMIToNDISender):
             fps_window_count += 1
             if send_end - fps_window_start >= 5.0:
                 fps = fps_window_count / (send_end - fps_window_start)
+                connections = -1
+                if self.sender is not None:
+                    try:
+                        connections = self.sender.get_num_connections(0.0)
+                    except Exception:
+                        connections = -1
                 logging.info(
-                    "Sending %.1f fps | step ms frame_read avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f",
+                    "Sending %.1f fps (connections=%d) | step ms frame_read avg=%.2f ndi_send avg=%.2f frame_proc avg=%.2f",
                     fps,
+                    connections,
                     read_window.avg(),
                     send_window.avg(),
                     frame_proc_window.avg(),

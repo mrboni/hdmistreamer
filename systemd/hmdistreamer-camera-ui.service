@@ -1,0 +1,17 @@
+[Unit]
+Description=HDMIStreamer video control web UI
+Wants=network.target
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/hmdistreamer/hmdistreamer.env
+ExecStart=/usr/bin/env python3 /usr/local/bin/hmdistreamer-camera-ui
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
